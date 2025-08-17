@@ -1,5 +1,6 @@
 /// <reference path="../worker-configuration.d.ts" />
 import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
+import { Sensemaker, OpenRouterModel } from 'sensemaking-tools';
 
 /**
  * Welcome to Cloudflare Workers! This is your first worker.
@@ -16,6 +17,13 @@ import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-type
 
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		return new Response('Hello, World!');
+		// Import and log sensemaker
+		console.log('Sensemaker imported successfully:', Sensemaker);
+		console.log('OpenRouterModel imported successfully:', OpenRouterModel);
+		
+		// Log the entire sensemaking-tools package
+		console.log('Full sensemaking-tools package:', { Sensemaker, OpenRouterModel });
+		
+		return new Response('Hello, World! Sensemaker imported successfully!');
 	},
 };
