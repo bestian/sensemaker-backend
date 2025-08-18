@@ -58,6 +58,9 @@ export async function parseCSVFile(file: File): Promise<Comment[]> {
 	const headers = lines[0].split(',').map(h => h.trim());
 	const dataLines = lines.slice(1);
 
+	console.log('CSV Headers:', headers);
+	console.log('Data lines count:', dataLines.length);
+
 	// 查找必要的列
 	const idIndex = headers.findIndex(h => h === 'comment-id' || h === 'id');
 	const textIndex = headers.findIndex(h => h === 'comment_text' || h === 'text');
@@ -76,58 +79,158 @@ export async function parseCSVFile(file: File): Promise<Comment[]> {
 		h === 'passes'
 	);
 
+	console.log('Vote columns found:', voteColumns);
+
 	// 檢查是否有群組信息
 	const hasGroupInfo = voteColumns.some(col => col.includes('-agree-count'));
-	const groupNames: string[] = [];
+	const hasSimpleVotes = voteColumns.some(col => ['agrees', 'disagrees', 'passes'].includes(col));
 	
+	// 提取群組名稱（如果存在群組信息）
+	const groupNames: string[] = [];
 	if (hasGroupInfo) {
-		// 提取群組名稱
 		groupNames.push(...new Set(voteColumns.map(col => col.split('-')[0])));
+		console.log('Group names:', groupNames);
 	}
+	
+	console.log('Vote format detection:', {
+		hasGroupInfo,
+		hasSimpleVotes,
+		groupNames
+	});
 
-	return dataLines.map((line, index) => {
+	const comments: Comment[] = [];
+
+	for (let i = 0; i < dataLines.length; i++) {
+		const line = dataLines[i];
 		const values = line.split(',').map(v => v.trim());
 		
+		console.log(`Processing line ${i + 1}:`, values);
+		
 		const comment: Comment = {
-			id: values[idIndex] || `comment-${index}`,
+			id: values[idIndex] || `comment-${i}`,
 			text: values[textIndex] || ''
 		};
 
 		// 處理投票信息
 		if (voteColumns.length > 0) {
-			if (hasGroupInfo) {
-				// 群組投票格式: {group name}-agree-count, {group name}-disagree-count, {group name}-pass-count
-				const voteInfo: { [key: string]: VoteTally } = {};
-				groupNames.forEach(group => {
-					const agreeCol = headers.findIndex(h => h === `${group}-agree-count`);
-					const disagreeCol = headers.findIndex(h => h === `${group}-disagree-count`);
-					const passCol = headers.findIndex(h => h === `${group}-pass-count`);
+			try {
+				if (hasGroupInfo) {
+					// 群組投票格式: {group name}-agree-count, {group name}-disagree-count, {group name}-pass-count
+					const voteInfo: { [key: string]: VoteTally } = {};
+					let allGroupsZero = true;
 					
-					if (agreeCol !== -1 && disagreeCol !== -1) {
-						voteInfo[group] = new VoteTally(
-							parseInt(values[agreeCol]) || 0,
-							parseInt(values[disagreeCol]) || 0,
-							passCol !== -1 ? (parseInt(values[passCol]) || 0) : 0
-						);
+					groupNames.forEach(group => {
+						const agreeCol = headers.findIndex(h => h === `${group}-agree-count`);
+						const disagreeCol = headers.findIndex(h => h === `${group}-disagree-count`);
+						const passCol = headers.findIndex(h => h === `${group}-pass-count`);
+						
+						if (agreeCol !== -1 && disagreeCol !== -1) {
+							const agreeCount = parseInt(values[agreeCol]) || 0;
+							const disagreeCount = parseInt(values[disagreeCol]) || 0;
+							const passCount = passCol !== -1 ? (parseInt(values[passCol]) || 0) : 0;
+							
+							console.log(`Creating VoteTally for group ${group}:`, { agreeCount, disagreeCount, passCount });
+							
+							// 檢查是否所有群組的投票都是 0
+							if (agreeCount > 0 || disagreeCount > 0 || passCount > 0) {
+								allGroupsZero = false;
+							}
+							
+							try {
+								voteInfo[group] = new VoteTally(agreeCount, disagreeCount, passCount);
+								console.log(`VoteTally created successfully for group ${group}:`, voteInfo[group]);
+							} catch (error) {
+								console.error(`Error creating VoteTally for group ${group}:`, error);
+								// 如果 VoteTally 創建失敗，使用普通對象
+								voteInfo[group] = {
+									agreeCount,
+									disagreeCount,
+									passCount,
+									getTotalCount: (includePasses: boolean) => {
+										if (includePasses) {
+											return agreeCount + disagreeCount + passCount;
+										} else {
+											return agreeCount + disagreeCount;
+										}
+									}
+								} as any;
+							}
+						}
+					});
+					
+					// 如果所有群組的投票都是 0，且存在簡單投票列，則使用簡單投票格式
+					if (allGroupsZero && hasSimpleVotes) {
+						console.log('All group votes are zero, falling back to simple vote format');
+						const agreesIndex = headers.findIndex(h => h === 'agrees');
+						const disagreesIndex = headers.findIndex(h => h === 'disagrees');
+						const passesIndex = headers.findIndex(h => h === 'passes');
+						
+						if (agreesIndex !== -1 && disagreesIndex !== -1) {
+							const agrees = parseInt(values[agreesIndex]) || 0;
+							const disagrees = parseInt(values[disagreesIndex]) || 0;
+							const passes = passesIndex !== -1 ? (parseInt(values[passesIndex]) || 0) : 0;
+							
+							console.log('Creating simple VoteTally (fallback):', { agrees, disagrees, passes });
+							
+							try {
+								comment.voteInfo = new VoteTally(agrees, disagrees, passes);
+								console.log('Simple VoteTally created successfully (fallback):', comment.voteInfo);
+							} catch (error) {
+								console.error('Error creating simple VoteTally (fallback):', error);
+								// 如果 VoteTally 創建失敗，使用普通對象
+								comment.voteInfo = {
+									agreeCount: agrees,
+									disagreeCount: disagrees,
+									passCount: passes,
+									getTotalCount: (includePasses: boolean) => {
+										if (includePasses) {
+											return agrees + disagrees + passes;
+										} else {
+											return agrees + disagrees;
+										}
+									}
+								} as any;
+							}
+						}
+					} else if (Object.keys(voteInfo).length > 0) {
+						comment.voteInfo = voteInfo;
 					}
-				});
-				
-				if (Object.keys(voteInfo).length > 0) {
-					comment.voteInfo = voteInfo;
+				} else if (hasSimpleVotes) {
+					// 簡單投票格式: agrees, disagrees, passes
+					const agreesIndex = headers.findIndex(h => h === 'agrees');
+					const disagreesIndex = headers.findIndex(h => h === 'disagrees');
+					const passesIndex = headers.findIndex(h => h === 'passes');
+					
+					if (agreesIndex !== -1 && disagreesIndex !== -1) {
+						const agrees = parseInt(values[agreesIndex]) || 0;
+						const disagrees = parseInt(values[disagreesIndex]) || 0;
+						const passes = passesIndex !== -1 ? (parseInt(values[passesIndex]) || 0) : 0;
+						
+						console.log('Creating simple VoteTally:', { agrees, disagrees, passes });
+						
+						try {
+							comment.voteInfo = new VoteTally(agrees, disagrees, passes);
+							console.log('Simple VoteTally created successfully:', comment.voteInfo);
+						} catch (error) {
+							console.error('Error creating simple VoteTally:', error);
+							// 如果 VoteTally 創建失敗，使用普通對象
+							comment.voteInfo = {
+								agreeCount: agrees,
+								disagreeCount: disagrees,
+								passCount: passes,
+								getTotalCount: (includePasses: boolean) => {
+									if (includePasses) {
+										return agrees + disagrees + passes;
+									} else {
+										return agrees + disagrees;
+									}
+								}
+							} as any;
+						}
+					}
 				}
-			} else {
-				// 簡單投票格式: agrees, disagrees, passes
-				const agreesIndex = headers.findIndex(h => h === 'agrees');
-				const disagreesIndex = headers.findIndex(h => h === 'disagrees');
-				const passesIndex = headers.findIndex(h => h === 'passes');
-				
-				if (agreesIndex !== -1 && disagreesIndex !== -1) {
-					comment.voteInfo = new VoteTally(
-						parseInt(values[agreesIndex]) || 0,
-						parseInt(values[disagreesIndex]) || 0,
-						passesIndex !== -1 ? (parseInt(values[passesIndex]) || 0) : 0
-					);
-				}
+			} catch (error) {
+				console.error('Error processing vote information:', error);
 			}
 		}
 
@@ -148,8 +251,12 @@ export async function parseCSVFile(file: File): Promise<Comment[]> {
 			}];
 		}
 
-		return comment;
-	});
+		comments.push(comment);
+		console.log(`Comment ${i + 1} created:`, comment);
+	}
+
+	console.log('Total comments created:', comments.length);
+	return comments;
 }
 
 /**
@@ -182,95 +289,22 @@ export function getVoteInfoFromCsvRow(
 }
 
 /**
- * 解析主題字符串，完全參考 runner_openrouter_utils.ts 的實現
+ * 解析主題字符串，支持嵌套主題格式
+ * 例如: "Education,Technology" 或 "Education:Math,Science:Physics"
  */
 export function parseTopicsString(topicsString: string): Topic[] {
 	if (!topicsString || topicsString.trim() === '') {
 		return [];
 	}
 
-	// 使用與 runner_openrouter_utils.ts 完全相同的邏輯
-	const subtopicMappings = topicsString
-		.split(';')
-		.reduce(
-			(
-				topicMapping: { [key: string]: Topic[] },
-				topicString: string
-			): { [key: string]: Topic[] } => {
-				const [topicName, subtopicName, subsubtopicName] = topicString.split(':');
-				
-				// 如果還沒有這個主題的映射，創建一個
-				topicMapping[topicName] = topicMapping[topicName] || [];
-				
-				if (subtopicName) {
-					let subsubtopic: Topic[] = [];
-					let subtopicUpdated = false;
-					
-					// 檢查現有的子主題並添加子子主題
-					for (const subtopic of topicMapping[topicName]) {
-						if (subtopic.name === subtopicName) {
-							subsubtopic = 'subtopics' in subtopic ? subtopic.subtopics : [];
-							if (subsubtopicName) {
-								subsubtopic.push({ name: subsubtopicName });
-								subtopicUpdated = true;
-								break;
-							}
-						}
-					}
-
-					if (subsubtopicName) {
-						subsubtopic = [{ name: subsubtopicName }];
-					}
-					
-					if (!subtopicUpdated) {
-						topicMapping[topicName].push({ name: subtopicName, subtopics: subsubtopic });
-					}
-				}
-
-				return topicMapping;
-			},
-			{}
-		);
-
-	// 將鍵值對映射到 Topic 對象
-	return Object.entries(subtopicMappings).map(([topicName, subtopics]) => {
-		if (subtopics.length === 0) {
-			return { name: topicName };
-		} else {
-			return { name: topicName, subtopics: subtopics };
-		}
-	});
-}
-
-/**
- * 從評論中提取主題信息
- */
-export function getTopicsFromComments(comments: Comment[]): Topic[] {
-	// 創建從主題名稱到子主題名稱集合的映射
-	const mapTopicToSubtopicSet: { [topicName: string]: Set<string> } = {};
+	// 移除引號
+	const cleanString = topicsString.replace(/^["']|["']$/g, '');
 	
-	for (const comment of comments) {
-		for (const topic of comment.topics || []) {
-			if (mapTopicToSubtopicSet[topic.name] == undefined) {
-				mapTopicToSubtopicSet[topic.name] = new Set();
-			}
-			if ("subtopics" in topic) {
-				for (const subtopic of topic.subtopics || []) {
-					mapTopicToSubtopicSet[topic.name].add(subtopic.name);
-				}
-			}
-		}
-	}
-
-	// 將映射轉換為 Topic 數組並返回
-	const returnTopics: Topic[] = [];
-	for (const topicName in mapTopicToSubtopicSet) {
-		const topic: Topic = { name: topicName, subtopics: [] };
-		for (const subtopicName of mapTopicToSubtopicSet[topicName]!.keys()) {
-			topic.subtopics.push({ name: subtopicName });
-		}
-		returnTopics.push(topic);
-	}
+	// 分割主題（支持逗號分隔）
+	const topicParts = cleanString.split(',').map(t => t.trim()).filter(t => t);
 	
-	return returnTopics;
+	return topicParts.map(topicName => ({
+		name: topicName,
+		subtopics: []
+	}));
 }

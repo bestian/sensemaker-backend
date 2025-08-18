@@ -111,6 +111,11 @@ export default {
 				return await handleSensemakeRequest(request, url, env, corsHeaders);
 			}
 
+			// CSV 解析測試端點
+			if (path === '/api/test-csv' && request.method === 'POST') {
+				return await handleTestCsvRequest(request, env, corsHeaders);
+			}
+
 			// 404 處理
 			return new Response('Not Found', { 
 				status: 404,
@@ -252,11 +257,55 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 		// 學習主題
 		console.log('Learning topics...');
 		try {
+			// 添加數據驗證
+			console.log('Input comments count:', comments.length);
+			console.log('Sample comment:', comments[0]);
+			
+			// 驗證輸入數據
+			if (!Array.isArray(comments) || comments.length === 0) {
+				throw new Error('Invalid input: comments must be a non-empty array');
+			}
+			
+			// 檢查每個 comment 的結構
+			comments.forEach((comment, index) => {
+				if (!comment || typeof comment !== 'object') {
+					throw new Error(`Invalid comment at index ${index}: must be an object`);
+				}
+				if (!comment.id || !comment.text) {
+					throw new Error(`Invalid comment at index ${index}: missing id or text`);
+				}
+			});
+			
 			const topics = await sensemaker.learnTopics(comments, true, undefined, additionalContext || undefined, 2, outputLang as any);
+			console.log('Topics learned:', topics);
 			
 			// 分類評論
 			console.log('Categorizing comments...');
 			const categorizedComments = await sensemaker.categorizeComments(comments, true, topics, additionalContext || undefined, 2, outputLang as any);
+			console.log('Comments categorized, count:', categorizedComments.length);
+			console.log('Sample categorized comment:', categorizedComments[0]);
+			
+					// 驗證分類後的評論
+		if (!Array.isArray(categorizedComments)) {
+			console.error('Categorized comments is not an array:', typeof categorizedComments, categorizedComments);
+			throw new Error('Categorization failed: expected array of comments');
+		}
+		
+		// 檢查分類後的評論結構
+		categorizedComments.forEach((comment, index) => {
+			if (!comment || typeof comment !== 'object') {
+				console.error(`Invalid categorized comment at index ${index}:`, comment);
+				throw new Error(`Invalid categorized comment at index ${index}: must be an object`);
+			}
+			if (!comment.id || !comment.text) {
+				console.error(`Invalid categorized comment at index ${index}:`, comment);
+				throw new Error(`Invalid categorized comment at index ${index}: missing id or text`);
+			}
+			if (!Array.isArray(comment.topics)) {
+				console.error(`Invalid categorized comment at index ${index}: topics is not an array:`, comment.topics);
+				throw new Error(`Invalid categorized comment at index ${index}: topics must be an array`);
+			}
+		});
 			
 			// 生成摘要
 			console.log('Generating summary...');
@@ -361,6 +410,165 @@ async function parseJSONFile(file: File): Promise<Comment[]> {
 	}
 }
 
+/**
+ * 處理 CSV 解析測試請求
+ */
+async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+	try {
+		// 解析請求體
+		const formData = await request.formData();
+		const file = formData.get('file') as File;
 
+		if (!file) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Missing File', 
+					message: 'No file provided in the request' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
 
+		// 檢查文件類型
+		if (!file.name.endsWith('.csv')) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Invalid File Type', 
+					message: 'Only CSV files are supported for this test endpoint' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
 
+		console.log('=== CSV 解析測試開始 ===');
+		console.log('文件名:', file.name);
+		console.log('文件大小:', file.size, 'bytes');
+
+		// 解析 CSV 文件
+		const comments = await parseCSVFile(file);
+		
+		console.log('=== CSV 解析結果 ===');
+		console.log('解析的評論數量:', comments.length);
+		
+		// 詳細記錄每個評論的投票信息
+		comments.forEach((comment, index) => {
+			console.log(`評論 ${index + 1}:`, {
+				id: comment.id,
+				text: comment.text?.substring(0, 50) + '...',
+				hasVoteInfo: !!comment.voteInfo,
+				voteInfoType: typeof comment.voteInfo,
+				voteInfoKeys: comment.voteInfo ? Object.keys(comment.voteInfo) : []
+			});
+			
+			if (comment.voteInfo) {
+				// 檢查是否為群組投票格式（對象有多個鍵）還是簡單投票格式（直接是 VoteTally 對象）
+				if (comment.voteInfo.constructor?.name === 'VoteTally') {
+					// 簡單投票格式
+					const voteData = comment.voteInfo as any;
+					console.log(`  簡單投票:`, {
+						agreeCount: voteData.agreeCount,
+						disagreeCount: voteData.disagreeCount,
+						passCount: voteData.passCount,
+						totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+						hasGetTotalCount: !!voteData.getTotalCount,
+						constructor: voteData.constructor?.name || 'Unknown'
+					});
+				} else {
+					// 群組投票格式
+					Object.entries(comment.voteInfo).forEach(([key, voteData]) => {
+						console.log(`  群組 ${key}:`, {
+							agreeCount: voteData.agreeCount,
+							disagreeCount: voteData.disagreeCount,
+							passCount: voteData.passCount,
+							totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+							hasGetTotalCount: !!voteData.getTotalCount,
+							constructor: voteData.constructor?.name || 'Unknown'
+						});
+					});
+				}
+			}
+		});
+
+		// 返回詳細的解析結果
+		return new Response(
+			JSON.stringify({
+				success: true,
+				fileName: file.name,
+				fileSize: file.size,
+				commentsCount: comments.length,
+				comments: comments.map(comment => ({
+					id: comment.id,
+					text: comment.text,
+					voteInfo: comment.voteInfo ? (() => {
+						// 檢查是否為群組投票格式還是簡單投票格式
+						if (comment.voteInfo.constructor?.name === 'VoteTally') {
+							// 簡單投票格式
+							const voteData = comment.voteInfo as any;
+							return {
+								agreeCount: voteData.agreeCount,
+								disagreeCount: voteData.disagreeCount,
+								passCount: voteData.passCount,
+								totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+								hasGetTotalCount: !!voteData.getTotalCount
+							};
+						} else {
+							// 群組投票格式
+							return Object.fromEntries(
+								Object.entries(comment.voteInfo).map(([key, voteData]) => [
+									key,
+									{
+										agreeCount: voteData.agreeCount,
+										disagreeCount: voteData.disagreeCount,
+										passCount: voteData.passCount,
+										totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+										hasGetTotalCount: !!voteData.getTotalCount
+									}
+								])
+							);
+						}
+					})() : undefined
+				})),
+				debug: {
+					lastModified: file.lastModified,
+					type: file.type
+				}
+			}, null, 2),
+			{
+				status: 200,
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				}
+			}
+		);
+
+	} catch (error) {
+		console.error('Error in CSV test processing:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'CSV Test Error', 
+				message: error instanceof Error ? error.message : 'Unknown CSV test error',
+				stack: error instanceof Error ? error.stack : undefined
+			}), 
+			{ 
+				status: 500, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+}
