@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sensemaker API 測試</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input[type="text"], input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .sample-data {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .sample-data h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .sample-data pre {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Sensemaker API 測試</h1>
+        
+        <div class="sample-data">
+            <h3>📋 測試數據格式</h3>
+            <p><strong>JSON 格式:</strong></p>
+            <pre>[
+  {
+    "id": "comment-1",
+    "text": "這個產品真的很棒，使用起來非常方便！",
+    "votes": {
+      "agrees": 15,
+      "disagrees": 2,
+      "passes": 1
+    }
+  },
+  {
+    "id": "comment-2", 
+    "text": "界面設計很美觀，功能也很實用。",
+    "votes": {
+      "agrees": 12,
+      "disagrees": 1,
+      "passes": 0
+    }
+  }
+]</pre>
+            
+            <p><strong>CSV 格式:</strong></p>
+            <pre>comment-id,comment_text,agrees,disagrees,passes
+comment-1,這個產品真的很棒使用起來非常方便,15,2,1
+comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
+        </div>
+
+        <form id="apiForm">
+            <div class="form-group">
+                <label for="apiKey">🔑 OpenRouter API Key (可選，如果後端已配置):</label>
+                <input type="text" id="apiKey" name="apiKey" placeholder="留空使用後端環境變數配置">
+            </div>
+            
+            <div class="form-group">
+                <label for="model">🤖 模型名稱 (可選，若無API Key，則使用後端環境變數配置):</label>
+                <input type="text" id="model" name="model" placeholder="openai/gpt-oss-20b:free" value="openai/gpt-oss-20b:free">
+            </div>
+            
+            <div class="form-group">
+                <label for="additionalContext">📝 額外上下文 (可選):</label>
+                <input type="text" id="additionalContext" name="additionalContext" placeholder="描述對話的背景和環境">
+            </div>
+            
+            <div class="form-group">
+                <label for="outputLang">🌐 輸出語言:</label>
+                <select id="outputLang" name="outputLang">
+                    <option value="en">English</option>
+                    <option value="zh-TW">繁體中文</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="file">📁 上傳文件 (JSON 或 CSV):</label>
+                <input type="file" id="file" name="file" accept=".json,.csv,application/json,text/csv" required>
+            </div>
+            
+            <button type="submit" id="submitBtn">🚀 開始分析</button>
+        </form>
+        
+        <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        document.getElementById('apiForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const resultDiv = document.getElementById('result');
+            
+            // 獲取表單數據
+            const apiKey = document.getElementById('apiKey').value.trim();
+            const model = document.getElementById('model').value.trim() || 'openai/gpt-oss-20b:free';
+            const additionalContext = document.getElementById('additionalContext').value.trim();
+            const outputLang = document.getElementById('outputLang').value;
+            const file = document.getElementById('file').files[0];
+            
+            if (!file) {
+                showResult('請選擇要上傳的文件', 'error');
+                return;
+            }
+            
+            // 禁用提交按鈕
+            submitBtn.disabled = true;
+            submitBtn.textContent = '⏳ 處理中...';
+            
+            try {
+                // 創建 FormData
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                // 構建 API URL
+                let apiUrl = `http://localhost:8787/api/sensemake?OPENROUTER_MODEL=${encodeURIComponent(model)}`;
+                
+                if (apiKey) {
+                    apiUrl += `&OPENROUTER_API_KEY=${encodeURIComponent(apiKey)}`;
+                }
+                
+                if (additionalContext) {
+                    apiUrl += `&additionalContext=${encodeURIComponent(additionalContext)}`;
+                }
+                
+                if (outputLang && outputLang !== 'en') {
+                    apiUrl += `&output_lang=${encodeURIComponent(outputLang)}`;
+                }
+                
+                showResult('📡 正在發送請求到 API...', 'info');
+                
+                // 發送請求
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    showResult(`✅ 分析完成！\n\n📊 處理了 ${result.commentsProcessed} 條評論\n🤖 使用模型: ${result.model}\n\n📝 摘要:\n${JSON.stringify(result.summary, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ 請求失敗 (${response.status}):\n${JSON.stringify(result, null, 2)}`, 'error');
+                }
+                
+            } catch (error) {
+                showResult(`❌ 請求錯誤:\n${error.message}`, 'error');
+            } finally {
+                // 恢復提交按鈕
+                submitBtn.disabled = false;
+                submitBtn.textContent = '🚀 開始分析';
+            }
+        });
+        
+        function showResult(message, type) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+            resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        // 健康檢查
+        async function checkHealth() {
+            try {
+                const response = await fetch('http://localhost:8787/api/test');
+                if (response.ok) {
+                    console.log('✅ 後端服務運行正常');
+                } else {
+                    console.log('❌ 後端服務異常');
+                }
+            } catch (error) {
+                console.log('❌ 無法連接到後端服務:', error.message);
+            }
+        }
+        
+        // 頁面載入時檢查健康狀態
+        window.addEventListener('load', checkHealth);
+    </script>
+</body>
+</html>

@@ -1,0 +1,10 @@
+# 開發環境變數文件
+# 複製此文件為 .dev.vars 並填入實際值
+# 注意：.dev.vars 已經在 .gitignore 中，不會被提交到版本控制
+
+# OpenRouter 配置
+OPENROUTER_API_KEY=your_actual_api_key_here
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+
+# 環境配置
+IS_DEVELOPMENT=true

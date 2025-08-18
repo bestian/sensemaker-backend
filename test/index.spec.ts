@@ -2,40 +2,53 @@ import { env, createExecutionContext, waitOnExecutionContext, SELF } from 'cloud
 import { describe, it, expect } from 'vitest';
 import worker from '../src';
 
-describe('Hello World user worker', () => {
-	describe('request for /message', () => {
-		it('/ responds with "Hello, World!" (unit style)', async () => {
-			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/message');
-			// Create an empty context to pass to `worker.fetch()`.
+describe('Sensemaker Backend API', () => {
+	describe('health check endpoint', () => {
+		it('/api/test responds with health message (unit style)', async () => {
+			const request = new Request('http://example.com/api/test');
 			const ctx = createExecutionContext();
-			const response = await worker.fetch(request, env, ctx);
-			// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
+			const response = await worker.fetch(request, env as any, ctx);
 			await waitOnExecutionContext(ctx);
-			expect(await response.text()).toMatchInlineSnapshot(`"Hello, World!"`);
+			expect(await response.text()).toMatchInlineSnapshot(`"Sensemaker Backend is running! 🚀"`);
 		});
 
-		it('responds with "Hello, World!" (integration style)', async () => {
-			const request = new Request('http://example.com/message');
+		it('/api/test responds with health message (integration style)', async () => {
+			const request = new Request('http://example.com/api/test');
 			const response = await SELF.fetch(request);
-			expect(await response.text()).toMatchInlineSnapshot(`"Hello, World!"`);
+			expect(await response.text()).toMatchInlineSnapshot(`"Sensemaker Backend is running! 🚀"`);
 		});
 	});
 
-	describe('request for /random', () => {
-		it('/ responds with a random UUID (unit style)', async () => {
-			const request = new Request<unknown, IncomingRequestCfProperties>('http://example.com/random');
-			// Create an empty context to pass to `worker.fetch()`.
-			const ctx = createExecutionContext();
-			const response = await worker.fetch(request, env, ctx);
-			// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
-			await waitOnExecutionContext(ctx);
-			expect(await response.text()).toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+	describe('CORS handling', () => {
+		it('handles OPTIONS preflight request', async () => {
+			const request = new Request('http://example.com/api/test', {
+				method: 'OPTIONS',
+				headers: {
+					'Origin': 'http://localhost:3000'
+				}
+			});
+			const response = await SELF.fetch(request);
+			expect(response.status).toBe(200);
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
 		});
 
-		it('responds with a random UUID (integration style)', async () => {
-			const request = new Request('http://example.com/random');
+		it('includes CORS headers in response', async () => {
+			const request = new Request('http://example.com/api/test', {
+				headers: {
+					'Origin': 'http://localhost:3000'
+				}
+			});
 			const response = await SELF.fetch(request);
-			expect(await response.text()).toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
+			expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
+		});
+	});
+
+	describe('error handling', () => {
+		it('returns 404 for unknown routes', async () => {
+			const request = new Request('http://example.com/unknown');
+			const response = await SELF.fetch(request);
+			expect(response.status).toBe(404);
 		});
 	});
 });
