@@ -2,7 +2,7 @@
 import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 import { Sensemaker, OpenRouterModel, SummarizationType, VoteTally } from 'sensemaking-tools';
 import type { Comment, Topic } from 'sensemaking-tools';
-import { parseCSVFile, parseTopicsString, getTopicsFromComments } from './utils/sensemake_openrouter_utils';
+import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_utils';
 
 /**
  * Sensemaker Backend API
