@@ -18,6 +18,7 @@ import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_ut
 
 interface Env {
 	OPENROUTER_API_KEY: string;
+	OPENROUTER_BASE_URL: string;
 	OPENROUTER_MODEL: string;
 	IS_DEVELOPMENT?: string;
 }
@@ -98,12 +99,118 @@ export default {
 
 			// 健康檢查端點
 			if (path === '/api/test' && request.method === 'GET') {
-				return new Response('Sensemaker Backend is running! 🚀', {
-					headers: { 
-						'Content-Type': 'text/plain; charset=utf-8',
-						...corsHeaders,
+				return new Response(
+					JSON.stringify({
+						status: 'ok',
+						message: 'Sensemaker Backend is running',
+						timestamp: new Date().toISOString(),
+						environment: isDevelopment ? 'development' : 'production'
+					}),
+					{
+						status: 200,
+						headers: {
+							'Content-Type': 'application/json',
+							...corsHeaders
+						}
 					}
+				);
+			}
+
+			// 簡單的 LLM 測試端點
+			if (path === '/api/test-llm' && request.method === 'POST') {
+				console.log('=== TESTING LLM INTEGRATION ===');
+				
+				// 創建一個簡單的測試評論
+				const testComment = {
+					id: 'test-1',
+					text: '這是一個測試評論，用來驗證 LLM 是否正常工作。'
+				};
+				
+				console.log('Test comment:', testComment);
+				
+				// 創建 OpenRouter 模型實例
+				const model = new (OpenRouterModel as any)(
+					env.OPENROUTER_API_KEY, 
+					env.OPENROUTER_MODEL, 
+					env.OPENROUTER_BASE_URL
+				);
+				
+				console.log('Model created with:', {
+					apiKey: env.OPENROUTER_API_KEY ? '***' + env.OPENROUTER_API_KEY.slice(-4) : 'undefined',
+					model: env.OPENROUTER_MODEL,
+					baseURL: env.OPENROUTER_BASE_URL
 				});
+				
+				try {
+					// 測試簡單的文本生成
+					console.log('Testing simple text generation...');
+					const simpleResponse = await model.generateText(
+						'請用繁體中文回答：這是一個測試，請回覆"測試成功"',
+						'zh-TW'
+					);
+					console.log('Simple text response:', simpleResponse);
+					
+					// 測試結構化數據生成
+					console.log('Testing structured data generation...');
+					let structuredResponse = null;
+					let structuredError = null;
+					
+					try {
+						structuredResponse = await model.generateData(
+							'請分析這個評論的情感傾向，並用JSON格式回覆：{"sentiment": "positive/negative/neutral", "confidence": 0.9}',
+							{
+								type: 'object',
+								properties: {
+									sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] },
+									confidence: { type: 'number', minimum: 0, maximum: 1 }
+								},
+								required: ['sentiment', 'confidence']
+							},
+							'zh-TW'
+						);
+						console.log('Structured response:', structuredResponse);
+					} catch (error) {
+						console.error('Structured data generation failed:', error);
+						structuredError = error instanceof Error ? error.message : String(error);
+					}
+					
+					return new Response(
+						JSON.stringify({
+							success: true,
+							message: 'LLM test completed',
+							testComment: testComment,
+							simpleResponse: simpleResponse,
+							structuredResponse: structuredResponse,
+							structuredError: structuredError,
+							timestamp: new Date().toISOString()
+						}, null, 2),
+						{
+							status: 200,
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders
+							}
+						}
+					);
+					
+				} catch (error) {
+					console.error('LLM test failed:', error);
+					return new Response(
+						JSON.stringify({
+							success: false,
+							message: 'LLM test failed',
+							error: error instanceof Error ? error.message : String(error),
+							timestamp: new Date().toISOString()
+						}, null, 2),
+						{
+							status: 500,
+							headers: {
+								'Content-Type': 'application/json',
+								...corsHeaders
+							}
+						}
+					);
+				}
 			}
 
 			// Sensemake API 端點
@@ -247,7 +354,7 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 		console.log(`Output language: ${outputLang}`);
 
 		// 創建 OpenRouter 模型實例
-		const model = new OpenRouterModel(openRouterApiKey, openRouterModel);
+		const model = new (OpenRouterModel as any)(openRouterApiKey, openRouterModel, env.OPENROUTER_BASE_URL);
 		
 		// 創建 Sensemaker 實例
 		const sensemaker = new Sensemaker({
