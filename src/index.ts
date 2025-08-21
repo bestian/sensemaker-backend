@@ -9,7 +9,10 @@ import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_ut
  * 
  * 支持的路由:
  * - GET /api/test: 健康檢查
- * - POST /api/sensemake: 智能分析評論數據
+ * - POST /api/sensemake: 智能分析評論數據（異步處理，結果存儲到 R2）
+ * - GET /api/sensemake/result/:taskId: 獲取處理結果
+ * - POST /api/test-llm: 簡單的 LLM 測試
+ * - POST /api/test-csv: CSV 解析測試
  * 
  * 使用方法:
  * - 本地開發: npm run dev
@@ -21,6 +24,7 @@ interface Env {
 	OPENROUTER_BASE_URL: string;
 	OPENROUTER_MODEL: string;
 	IS_DEVELOPMENT?: string;
+	SENSEMAKER_RESULTS: R2Bucket;
 }
 
 const ALLOWED_ORIGINS = [
@@ -114,6 +118,11 @@ export default {
 						}
 					}
 				);
+			}
+
+			// 獲取處理結果的端點
+			if (path.startsWith('/api/sensemake/result/') && request.method === 'GET') {
+				return await handleGetResultRequest(request, url, env, corsHeaders);
 			}
 
 			// 簡單的 LLM 測試端點
@@ -215,7 +224,7 @@ export default {
 
 			// Sensemake API 端點
 			if (path === '/api/sensemake' && request.method === 'POST') {
-				return await handleSensemakeRequest(request, url, env, corsHeaders);
+				return await handleSensemakeRequest(request, url, env, corsHeaders, ctx);
 			}
 
 			// CSV 解析測試端點
@@ -251,9 +260,9 @@ export default {
 };
 
 /**
- * 處理 sensemake API 請求
+ * 處理 sensemake API 請求（異步處理，結果存儲到 R2）
  */
-async function handleSensemakeRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+async function handleSensemakeRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>, ctx: ExecutionContext): Promise<Response> {
 	
 	console.log('OPENROUTER_API_KEY', env.OPENROUTER_API_KEY);
 	console.log('OPENROUTER_MODEL', env.OPENROUTER_MODEL);
@@ -347,138 +356,52 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			);
 		}
 
-		console.log(`Processing ${comments.length} comments with model: ${openRouterModel}`);
-		if (additionalContext) {
-			console.log(`Additional context: ${additionalContext}`);
-		}
-		console.log(`Output language: ${outputLang}`);
+		// 生成唯一的任務 ID
+		const taskId = generateTaskId();
+		console.log(`Starting task ${taskId} with ${comments.length} comments`);
 
-		// 創建 OpenRouter 模型實例
-		const model = new (OpenRouterModel as any)(openRouterApiKey, openRouterModel, env.OPENROUTER_BASE_URL);
-		
-		// 創建 Sensemaker 實例
-		const sensemaker = new Sensemaker({
-			defaultModel: model
-		});
-
-		// 學習主題
-		console.log('Learning topics...');
-		try {
-			// 添加數據驗證
-			console.log('Input comments count:', comments.length);
-			console.log('Sample comment:', comments[0]);
-			
-			// 驗證輸入數據
-			if (!Array.isArray(comments) || comments.length === 0) {
-				throw new Error('Invalid input: comments must be a non-empty array');
-			}
-			
-			// 檢查每個 comment 的結構
-			comments.forEach((comment, index) => {
-				if (!comment || typeof comment !== 'object') {
-					throw new Error(`Invalid comment at index ${index}: must be an object`);
+		// 立即返回任務 ID，讓前端開始輪詢
+		const response = new Response(
+			JSON.stringify({
+				success: true,
+				taskId: taskId,
+				message: 'Task started successfully',
+				commentsCount: comments.length,
+				model: openRouterModel,
+				status: 'processing',
+				pollingUrl: `/api/sensemake/result/${taskId}`,
+				estimatedTime: '2-5 minutes'
+			}),
+			{
+				status: 202, // Accepted
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
 				}
-				if (!comment.id || !comment.text) {
-					throw new Error(`Invalid comment at index ${index}: missing id or text`);
-				}
-			});
-			
-			const topics = await sensemaker.learnTopics(comments, true, undefined, additionalContext || undefined, 2, outputLang as any);
-			console.log('Topics learned:', topics);
-			
-			// 分類評論
-			console.log('Categorizing comments...');
-			const categorizedComments = await sensemaker.categorizeComments(comments, true, topics, additionalContext || undefined, 2, outputLang as any);
-			console.log('Comments categorized, count:', categorizedComments.length);
-			console.log('Sample categorized comment:', categorizedComments[0]);
-			
-					// 驗證分類後的評論
-		if (!Array.isArray(categorizedComments)) {
-			console.error('Categorized comments is not an array:', typeof categorizedComments, categorizedComments);
-			throw new Error('Categorization failed: expected array of comments');
-		}
-		
-		// 檢查分類後的評論結構
-		categorizedComments.forEach((comment, index) => {
-			if (!comment || typeof comment !== 'object') {
-				console.error(`Invalid categorized comment at index ${index}:`, comment);
-				throw new Error(`Invalid categorized comment at index ${index}: must be an object`);
 			}
-			if (!comment.id || !comment.text) {
-				console.error(`Invalid categorized comment at index ${index}:`, comment);
-				throw new Error(`Invalid categorized comment at index ${index}: missing id or text`);
-			}
-			if (!Array.isArray(comment.topics)) {
-				console.error(`Invalid categorized comment at index ${index}: topics is not an array:`, comment.topics);
-				throw new Error(`Invalid categorized comment at index ${index}: topics must be an array`);
-			}
-		});
-			
-			// 生成摘要
-			console.log('Generating summary...');
-			const summary = await sensemaker.summarize(
-				categorizedComments, 
-				SummarizationType.AGGREGATE_VOTE, 
-				topics, 
-				additionalContext || undefined, 
-				outputLang as any
-			);
+		);
 
-			// 移除 TopicSummary 部分，只保留核心摘要內容
-			const filteredSummary = summary.withoutContents((sc) => sc.type === "TopicSummary");
+		// 在背景中處理任務（不等待完成）
+		ctx.waitUntil(processSensemakeTask(
+			taskId,
+			comments,
+			openRouterApiKey,
+			openRouterModel,
+			additionalContext,
+			outputLang,
+			env
+		).catch(error => {
+			console.error(`Task ${taskId}: Unhandled error in waitUntil:`, error);
+		}));
 
-			// 獲取 markdown 格式的摘要
-			const markdownContent = filteredSummary.getText("MARKDOWN");
-
-			// 返回結果
-			return new Response(
-				JSON.stringify({
-					success: true,
-					model: openRouterModel,
-					commentsProcessed: comments.length,
-					additionalContext: additionalContext || null,
-					outputLanguage: outputLang,
-					summary: markdownContent
-				}, null, 2),
-				{
-					status: 200,
-					headers: { 
-						'Content-Type': 'application/json',
-						...corsHeaders,
-					}
-				}
-			);
-		} catch (error) {
-			console.error('Error in AI processing:', error);
-			
-			// 如果是空回應錯誤，提供更友好的錯誤信息
-			if (error instanceof Error && error.message.includes('Empty response')) {
-				return new Response(
-					JSON.stringify({ 
-						error: 'AI Model Error', 
-						message: 'AI 模型返回了空回應，這可能是由於：\n1. 模型暫時不可用\n2. 請求內容過於複雜\n3. API 配額已用完\n\n建議：\n- 稍後重試\n- 檢查 API 金鑰是否有效\n- 嘗試使用不同的模型',
-						suggestion: 'retry_later'
-					}), 
-					{ 
-						status: 503, 
-						headers: { 
-							'Content-Type': 'application/json',
-							...corsHeaders,
-						} 
-					}
-				);
-			}
-			
-			// 重新拋出其他錯誤
-			throw error;
-		}
+		return response;
 
 	} catch (error) {
-		console.error('Error in sensemake processing:', error);
+		console.error('Error in sensemake request handling:', error);
 		return new Response(
 			JSON.stringify({ 
-				error: 'Processing Error', 
-				message: error instanceof Error ? error.message : 'Unknown processing error' 
+				error: 'Request Error', 
+				message: error instanceof Error ? error.message : 'Unknown request error' 
 			}), 
 			{ 
 				status: 500, 
@@ -489,6 +412,243 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			}
 		);
 	}
+}
+
+/**
+ * 在背景中處理 sensemake 任務
+ */
+async function processSensemakeTask(
+	taskId: string,
+	comments: Comment[],
+	openRouterApiKey: string,
+	openRouterModel: string,
+	additionalContext: string | null,
+	outputLang: string,
+	env: Env
+): Promise<void> {
+	try {
+		console.log(`Task ${taskId}: Starting processing...`);
+		
+		// 創建 OpenRouter 模型實例
+		const model = new (OpenRouterModel as any)(openRouterApiKey, openRouterModel, env.OPENROUTER_BASE_URL);
+		
+		// 創建 Sensemaker 實例
+		const sensemaker = new Sensemaker({
+			defaultModel: model
+		});
+
+		// 學習主題
+		console.log(`Task ${taskId}: Learning topics...`);
+		const topics = await sensemaker.learnTopics(comments, true, undefined, additionalContext || undefined, 2, outputLang as any);
+		console.log(`Task ${taskId}: Topics learned:`, topics);
+		
+		// 分類評論
+		console.log(`Task ${taskId}: Categorizing comments...`);
+		const categorizedComments = await sensemaker.categorizeComments(comments, true, topics, additionalContext || undefined, 2, outputLang as any);
+		console.log(`Task ${taskId}: Comments categorized, count:`, categorizedComments.length);
+		
+		// 生成摘要
+		console.log(`Task ${taskId}: Generating summary...`);
+		const summary = await sensemaker.summarize(
+			categorizedComments, 
+			SummarizationType.AGGREGATE_VOTE, 
+			topics, 
+			additionalContext || undefined, 
+			outputLang as any
+		);
+
+		// 移除 TopicSummary 部分，只保留核心摘要內容
+		const filteredSummary = summary.withoutContents((sc) => sc.type === "TopicSummary");
+
+		// 獲取 markdown 格式的摘要
+		const markdownContent = filteredSummary.getText("MARKDOWN");
+
+		// 將結果存儲到 R2
+		const resultData = {
+			taskId: taskId,
+			status: 'completed',
+			completedAt: new Date().toISOString(),
+			model: openRouterModel,
+			commentsProcessed: comments.length,
+			additionalContext: additionalContext || null,
+			outputLanguage: outputLang,
+			summary: markdownContent
+		};
+
+		// 存儲到 R2
+		const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
+		await bucket.put(
+			`${taskId}.json`,
+			JSON.stringify(resultData, null, 2),
+			{
+				httpMetadata: {
+					contentType: 'application/json',
+				},
+				customMetadata: {
+					taskId: taskId,
+					status: 'completed',
+					completedAt: resultData.completedAt
+				}
+			}
+		);
+
+		console.log(`Task ${taskId}: Completed and stored to R2`);
+
+	} catch (error) {
+		console.error(`Task ${taskId}: Error during processing:`, error);
+		
+		// 存儲錯誤信息到 R2
+		const errorData = {
+			taskId: taskId,
+			status: 'failed',
+			failedAt: new Date().toISOString(),
+			error: error instanceof Error ? error.message : 'Unknown error',
+			stack: error instanceof Error ? error.stack : undefined
+		};
+
+		try {
+			const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
+			await bucket.put(
+				`${taskId}.json`,
+				JSON.stringify(errorData, null, 2),
+				{
+					httpMetadata: {
+						contentType: 'application/json',
+					},
+					customMetadata: {
+						taskId: taskId,
+						status: 'failed',
+						failedAt: errorData.failedAt
+					}
+				}
+			);
+		} catch (storageError) {
+			console.error(`Task ${taskId}: Failed to store error to R2:`, storageError);
+		}
+		
+		// 重新拋出錯誤，確保 Promise 正確 reject
+		throw error;
+	}
+}
+
+/**
+ * 處理獲取結果的請求
+ */
+async function handleGetResultRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+	try {
+		// 從 URL 路徑中提取任務 ID
+		const pathParts = url.pathname.split('/');
+		const taskId = pathParts[pathParts.length - 1];
+		
+		if (!taskId) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Missing Task ID', 
+					message: 'Task ID is required' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		console.log(`Fetching result for task: ${taskId}`);
+
+		// 從 R2 中獲取結果
+		const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
+		const object = await bucket.get(`${taskId}.json`);
+
+		if (!object) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Task Not Found', 
+					message: 'Task not found or still processing',
+					taskId: taskId,
+					status: 'not_found'
+				}), 
+				{ 
+					status: 404, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		// 解析結果數據
+		const resultData = JSON.parse(await object.text());
+		
+		if (resultData.status === 'failed') {
+			return new Response(
+				JSON.stringify({ 
+					message: 'Task processing failed',
+					taskId: taskId,
+					status: 'failed',
+					error: resultData.error,
+					failedAt: resultData.failedAt
+				}), 
+				{ 
+					status: 500, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		// 返回成功的結果
+		return new Response(
+			JSON.stringify({
+				success: true,
+				taskId: taskId,
+				status: 'completed',
+				completedAt: resultData.completedAt,
+				model: resultData.model,
+				commentsProcessed: resultData.commentsProcessed,
+				additionalContext: resultData.additionalContext,
+				outputLanguage: resultData.outputLanguage,
+				summary: resultData.summary
+			}),
+			{
+				status: 200,
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				}
+			}
+		);
+
+	} catch (error) {
+		console.error('Error fetching result:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'Result Fetch Error', 
+				message: error instanceof Error ? error.message : 'Unknown error fetching result' 
+			}), 
+			{ 
+				status: 500, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+}
+
+/**
+ * 生成唯一的任務 ID
+ */
+function generateTaskId(): string {
+	const timestamp = Date.now();
+	const random = Math.random().toString(36).substring(2, 15);
+	return `task-${timestamp}-${random}`;
 }
 
 /**

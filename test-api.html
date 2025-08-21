@@ -83,6 +83,11 @@
             border: 1px solid #bee5eb;
             color: #0c5460;
         }
+        .warning {
+            background-color: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
         .sample-data {
             background-color: #f8f9fa;
             border: 1px solid #e9ecef;
@@ -99,6 +104,55 @@
             padding: 10px;
             border-radius: 3px;
             overflow-x: auto;
+        }
+        
+        /* 任務狀態樣式 */
+        .task-status {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 20px 0;
+            display: none;
+        }
+        .task-status h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .task-info {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .task-info div {
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .task-info strong {
+            color: #495057;
+        }
+        .polling-status {
+            text-align: center;
+            padding: 10px;
+            background-color: #e3f2fd;
+            border-radius: 3px;
+            margin: 10px 0;
+        }
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
         
         /* Markdown 樣式優化 */
@@ -227,6 +281,21 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             <button type="submit" id="submitBtn">🚀 開始分析</button>
         </form>
         
+        <!-- 任務狀態顯示區域 -->
+        <div id="taskStatus" class="task-status">
+            <h3>📊 任務狀態</h3>
+            <div class="task-info">
+                <div><strong>任務 ID:</strong> <span id="taskId">-</span></div>
+                <div><strong>狀態:</strong> <span id="taskStatusText">-</span></div>
+                <div><strong>評論數量:</strong> <span id="commentsCount">-</span></div>
+                <div><strong>使用模型:</strong> <span id="modelUsed">-</span></div>
+            </div>
+            <div class="polling-status">
+                <div class="spinner"></div>
+                <span id="pollingMessage">正在輪詢結果...</span>
+            </div>
+        </div>
+        
         <div id="result" class="result" style="display: none;"></div>
     </div>
 
@@ -238,11 +307,15 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             sanitize: false // 允許 HTML 標籤
         });
         
+        let currentTaskId = null;
+        let pollingInterval = null;
+        
         document.getElementById('apiForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             
             const submitBtn = document.getElementById('submitBtn');
             const resultDiv = document.getElementById('result');
+            const taskStatusDiv = document.getElementById('taskStatus');
             
             // 獲取表單數據
             const apiKey = document.getElementById('apiKey').value.trim();
@@ -255,6 +328,9 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 showResult('請選擇要上傳的文件', 'error');
                 return;
             }
+            
+            // 隱藏之前的結果
+            resultDiv.style.display = 'none';
             
             // 禁用提交按鈕
             submitBtn.disabled = true;
@@ -290,25 +366,15 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 
                 const result = await response.json();
                 
-                if (response.ok) {
-                    // 使用 Markdown 渲染摘要內容
-                    const summaryMarkdown = result.summary || '';
-                    const renderedSummary = marked.parse(summaryMarkdown);
+                if (response.ok && result.success) {
+                    // 顯示任務狀態
+                    currentTaskId = result.taskId;
+                    showTaskStatus(result);
                     
-                    const resultHtml = `
-                        <h2>✅ 分析完成！</h2>
-                        <div style="margin-bottom: 1em;">
-                            <p><strong>📊 處理了 ${result.commentsProcessed || 'N/A'} 條評論</strong></p>
-                            <p><strong>🤖 使用模型:</strong> ${result.model || 'N/A'}</p>
-                        </div>
-                        <hr style="margin: 1.5em 0; border: none; border-top: 1px solid #ddd;">
-                        <h3>📝 摘要:</h3>
-                        <div class="markdown-content">
-                            ${renderedSummary}
-                        </div>
-                    `;
+                    // 開始輪詢結果
+                    startPolling(result.taskId);
                     
-                    showResult(resultHtml, 'success', true);
+                    showResult(`✅ 任務已開始！\n\n任務 ID: ${result.taskId}\n狀態: ${result.status}\n預計完成時間: ${result.estimatedTime}`, 'success');
                 } else {
                     showResult(`❌ 請求失敗 (${response.status}):\n${JSON.stringify(result, null, 2)}`, 'error');
                 }
@@ -321,6 +387,101 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 submitBtn.textContent = '🚀 開始分析';
             }
         });
+        
+        function showTaskStatus(taskData) {
+            const taskStatusDiv = document.getElementById('taskStatus');
+            const taskIdSpan = document.getElementById('taskId');
+            const taskStatusTextSpan = document.getElementById('taskStatusText');
+            const commentsCountSpan = document.getElementById('commentsCount');
+            const modelUsedSpan = document.getElementById('modelUsed');
+            
+            taskIdSpan.textContent = taskData.taskId;
+            taskStatusTextSpan.textContent = taskData.status;
+            commentsCountSpan.textContent = taskData.commentsCount;
+            modelUsedSpan.textContent = taskData.model;
+            
+            taskStatusDiv.style.display = 'block';
+        }
+        
+        function startPolling(taskId) {
+            // 清除之前的輪詢
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+            
+            // 開始輪詢，每20秒檢查一次
+            pollingInterval = setInterval(async () => {
+                await checkTaskResult(taskId);
+            }, 20000);
+            
+            // 立即檢查一次
+            checkTaskResult(taskId);
+        }
+        
+        async function checkTaskResult(taskId) {
+            console.log('checkTaskResult', taskId);
+            try {
+                const response = await fetch(`http://localhost:8787/api/sensemake/result/${taskId}`);
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    if (result.status === 'completed') {
+                        // 任務完成，停止輪詢
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        
+                        // 隱藏任務狀態
+                        document.getElementById('taskStatus').style.display = 'none';
+                        
+                        // 顯示結果
+                        showFinalResult(result);
+                    } else {
+                        // 更新輪詢狀態
+                        updatePollingStatus(`任務仍在處理中... (${new Date().toLocaleTimeString()})`);
+                    }
+                } else if (response.status === 404) {
+                    // 任務還在處理中
+                    updatePollingStatus(`任務仍在處理中... (${new Date().toLocaleTimeString()})`);
+                } else {
+                    // 任務失敗
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    
+                    showResult(`❌ 任務失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
+                    document.getElementById('taskStatus').style.display = 'none';
+                }
+                
+            } catch (error) {
+                updatePollingStatus(`輪詢錯誤: ${error.message} (${new Date().toLocaleTimeString()})`);
+            }
+        }
+        
+        function updatePollingStatus(message) {
+            const pollingMessage = document.getElementById('pollingMessage');
+            pollingMessage.textContent = message;
+        }
+        
+        function showFinalResult(result) {
+            // 使用 Markdown 渲染摘要內容
+            const summaryMarkdown = result.summary || '';
+            const renderedSummary = marked.parse(summaryMarkdown);
+            
+            const resultHtml = `
+                <h2>✅ 分析完成！</h2>
+                <div style="margin-bottom: 1em;">
+                    <p><strong>📊 處理了 ${result.commentsProcessed || 'N/A'} 條評論</strong></p>
+                    <p><strong>🤖 使用模型:</strong> ${result.model || 'N/A'}</p>
+                    <p><strong>⏰ 完成時間:</strong> ${new Date(result.completedAt).toLocaleString('zh-TW')}</p>
+                </div>
+                <hr style="margin: 1.5em 0; border: none; border-top: 1px solid #ddd;">
+                <h3>📝 摘要:</h3>
+                <div class="markdown-content">
+                    ${renderedSummary}
+                </div>
+            `;
+            
+            showResult(resultHtml, 'success', true);
+        }
         
         function showResult(message, type, isHtml = false) {
             const resultDiv = document.getElementById('result');
@@ -352,6 +513,13 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
         
         // 頁面載入時檢查健康狀態
         window.addEventListener('load', checkHealth);
+        
+        // 頁面卸載時清理輪詢
+        window.addEventListener('beforeunload', () => {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+        });
     </script>
 </body>
 </html>

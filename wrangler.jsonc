@@ -15,5 +15,12 @@
   "vars": {
     "OPENROUTER_MODEL": "openai/gpt-oss-20b:free",
     "IS_DEVELOPMENT": "true"
-  }
+  },
+  "r2_buckets": [
+    {
+      "binding": "SENSEMAKER_RESULTS",
+      "bucket_name": "sensemaker-results",
+      "preview_bucket_name": "sensemaker-results-preview"
+    }
+  ]
 }

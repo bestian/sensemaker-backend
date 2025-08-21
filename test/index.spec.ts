@@ -9,13 +9,29 @@ describe('Sensemaker Backend API', () => {
 			const ctx = createExecutionContext();
 			const response = await worker.fetch(request, env as any, ctx);
 			await waitOnExecutionContext(ctx);
-			expect(await response.text()).toMatchInlineSnapshot(`"Sensemaker Backend is running! 🚀"`);
+			const responseText = await response.text();
+			expect(response.status).toBe(200);
+			expect(response.headers.get('Content-Type')).toBe('application/json');
+			
+			const responseData = JSON.parse(responseText);
+			expect(responseData.status).toBe('ok');
+			expect(responseData.message).toBe('Sensemaker Backend is running');
+			expect(responseData.environment).toBe('development');
+			expect(responseData.timestamp).toBeDefined();
 		});
 
 		it('/api/test responds with health message (integration style)', async () => {
 			const request = new Request('http://example.com/api/test');
 			const response = await SELF.fetch(request);
-			expect(await response.text()).toMatchInlineSnapshot(`"Sensemaker Backend is running! 🚀"`);
+			const responseText = await response.text();
+			expect(response.status).toBe(200);
+			expect(response.headers.get('Content-Type')).toBe('application/json');
+			
+			const responseData = JSON.parse(responseText);
+			expect(responseData.status).toBe('ok');
+			expect(responseData.message).toBe('Sensemaker Backend is running');
+			expect(responseData.environment).toBe('development');
+			expect(responseData.timestamp).toBeDefined();
 		});
 	});
 
