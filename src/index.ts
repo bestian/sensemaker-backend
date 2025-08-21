@@ -370,7 +370,7 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 				model: openRouterModel,
 				status: 'processing',
 				pollingUrl: `/api/sensemake/result/${taskId}`,
-				estimatedTime: '2-5 minutes'
+				estimatedTime: '10~30 minutes'
 			}),
 			{
 				status: 202, // Accepted
