@@ -1,0 +1,11 @@
+[
+  {
+    "id": "1",
+    "text": "這是一個測試評論，用來驗證 Sensemaker 功能是否正常工作。",
+    "voteInfo": {
+      "agreeCount": 1,
+      "disagreeCount": 0,
+      "passCount": 0
+    }
+  }
+]
