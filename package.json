@@ -10,7 +10,7 @@
 		"cf-typegen": "wrangler types"
 	},
 	"dependencies": {
-		"sensemaking-tools": "file:../sensemaking-tools/library"
+		"sensemaking-tools": "file:../sensemaking-tools/library/sensemaking-tools-1.0.0.tgz"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.8.19",
