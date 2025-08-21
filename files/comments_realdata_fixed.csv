@@ -1,4 +1,4 @@
-timestamp,datetime,comment-id,author-id,agrees,disagrees,passes,votes,moderated,comment-text
+timestamp,datetime,comment-id,author-id,agrees,disagrees,passes,votes,moderated,comment_text
 1681230375,Tue Apr 11 2023 16:26:15 GMT+0000 (Coordinated Universal Time),355,0,3,2,0,5,1,Generative AI might bring about Athenian-like leisure time.
 1680530603,Mon Apr 03 2023 14:03:23 GMT+0000 (Coordinated Universal Time),273,161,1,0,0,1,-1,h
 1680124112,Wed Mar 29 2023 21:08:32 GMT+0000 (Coordinated Universal Time),0,0,5,17,0,22,1,I'm excited about the possibilities of generative AI for targeting and mobilizing voters.
