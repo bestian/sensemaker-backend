@@ -52,9 +52,9 @@ Sensemaker Backend 是一個基於 Cloudflare Workers 的後端服務，集成�
    ```
 
 3. **配置環境變數**
-   - 複製 `.env.example` 為 `.env` 文件
+   - 複製 `.dev.var.example` 為 `.dev.vars` 文件
    - 填入您的 OpenRouter API 金鑰和模型配置
-   - 或者直接在 `wrangler.jsonc` 中配置環境變數
+   - 或者使用 Cloudflare Secret 來配置環境變數
    - 確保 sensemaking-tools 庫在正確的路徑 (`../sensemaking-tools/library`)
    - 如果需要，配置 Cloudflare 認證
 
