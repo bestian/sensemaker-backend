@@ -564,6 +564,25 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             }
         });
 
+        async function testLLM() {
+            try {
+                showResult('🔄 正在測試 LLM 連接...', 'info');
+                
+                const response = await fetch('https://sensemaker-backend.bestian123.workers.dev/api/test-llm', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (response.ok && result.success) {
+                    showResult(`✅ LLM 測試成功！\n\n簡單回應: ${result.simpleResponse}\n\n結構化回應: ${JSON.stringify(result.structuredResponse, null, 2)}\n\n測試評論: ${JSON.stringify(result.testComment, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ LLM 測試失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ LLM 測試請求錯誤:\n${error.message}`, 'error');
+            }
+        }
+
         async function testCSV() {
 
             const fileInput = document.getElementById('file');
