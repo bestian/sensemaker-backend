@@ -213,6 +213,42 @@
             padding-left: 1em;
             color: #6c757d;
         }
+
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .test-buttons {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .test-btn {
+            padding: 10px 20px;
+            background-color: #17a2b8;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+
+        .test-btn:hover {
+            background-color: #138496;
+        }
+
+        .test-btn:active {
+            background-color: #117a8b;
+        }
     </style>
 </head>
 <body>
@@ -297,6 +333,13 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
         </div>
         
         <div id="result" class="result" style="display: none;"></div>
+
+        <!-- 測試按鈕區域 -->
+        <div class="test-buttons">
+            <button onclick="testLLM()" class="test-btn">🧠 測試 LLM</button>
+            <button onclick="testCSV()" class="test-btn">📊 測試 CSV</button>
+            <button onclick="testR2()" class="test-btn">☁️ 測試 R2</button>
+        </div>
     </div>
 
     <script>
@@ -520,6 +563,53 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 clearInterval(pollingInterval);
             }
         });
+
+        async function testCSV() {
+
+            const fileInput = document.getElementById('file');
+            if (!fileInput.files[0]) {
+                showResult('❌ 請先選擇 CSV 文件', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                const response = await fetch('https://sensemaker-backend.bestian123.workers.dev/api/test-csv', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showResult(`✅ CSV 解析成功！\n\n處理了 ${result.commentsCount} 條評論\n\n詳細結果:\n${JSON.stringify(result, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ CSV 解析失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 請求錯誤:\n${error.message}`, 'error');
+            }
+        }
+
+        async function testR2() {
+            try {
+                showResult('🔄 正在測試 R2 讀寫...', 'info');
+                
+                const response = await fetch('https://sensemaker-backend.bestian123.workers.dev/api/test-r2', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (response.ok && result.success) {
+                    showResult(`✅ R2 測試成功！\n\n讀取的值: ${result.readValue}\n\n自定義元數據: ${JSON.stringify(result.customMetadata, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ R2 測試失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ R2 測試請求錯誤:\n${error.message}`, 'error');
+            }
+        }
     </script>
 </body>
 </html>

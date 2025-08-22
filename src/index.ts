@@ -232,6 +232,11 @@ export default {
 				return await handleTestCsvRequest(request, env, corsHeaders);
 			}
 
+			// R2 讀寫測試端點
+			if (path === '/api/test-r2' && request.method === 'POST') {
+				return await handleTestR2Request(request, env, corsHeaders);
+			}
+
 			// 404 處理
 			return new Response('Not Found', { 
 				status: 404,
@@ -827,6 +832,87 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 			JSON.stringify({ 
 				error: 'CSV Test Error', 
 				message: error instanceof Error ? error.message : 'Unknown CSV test error',
+				stack: error instanceof Error ? error.stack : undefined
+			}), 
+			{ 
+				status: 500, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+}
+
+/**
+ * 處理 R2 讀寫測試請求
+ */
+async function handleTestR2Request(request: Request, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+	try {
+		const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
+		const testKey = 'test-r2-key';
+		const testValue = 'test-r2-value';
+
+		console.log('=== R2 讀寫測試開始 ===');
+		console.log('測試鍵:', testKey);
+		console.log('測試值:', testValue);
+
+		// 寫入數據
+		await bucket.put(testKey, testValue, {
+			httpMetadata: {
+				contentType: 'text/plain',
+			},
+			customMetadata: {
+				test: 'write-test'
+			}
+		});
+		console.log('數據已寫入 R2');
+
+		// 讀取數據
+		const object = await bucket.get(testKey);
+		if (object) {
+			const readValue = await object.text();
+			console.log('從 R2 讀取的值:', readValue);
+			return new Response(
+				JSON.stringify({
+					success: true,
+					message: 'R2 write and read test completed',
+					readValue: readValue,
+					customMetadata: object.customMetadata
+				}),
+				{
+					status: 200,
+					headers: {
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					}
+				}
+			);
+		} else {
+			return new Response(
+				JSON.stringify({
+					success: false,
+					message: 'Failed to read data from R2',
+					taskId: testKey,
+					status: 'not_found'
+				}),
+				{
+					status: 500,
+					headers: {
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					}
+				}
+			);
+		}
+
+	} catch (error) {
+		console.error('Error in R2 test processing:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'R2 Test Error', 
+				message: error instanceof Error ? error.message : 'Unknown R2 test error',
 				stack: error instanceof Error ? error.stack : undefined
 			}), 
 			{ 
