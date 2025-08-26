@@ -32,6 +32,7 @@ const ALLOWED_ORIGINS = [
 	'http://localhost:8787',
 	'http://localhost:5173',
 	'https://sensemaker-frontend.pages.dev',
+	'https://sensemaker-backend.bestian123.workers.dev',
 ];
 
 // 開發環境的寬鬆 CORS 設置
