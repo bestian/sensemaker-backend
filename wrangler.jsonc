@@ -10,7 +10,7 @@
     "directory": "./public"
   },
   "observability": {
-    "enabled": false
+    "enabled": true
   },
   "vars": {
     "OPENROUTER_MODEL": "openai/gpt-oss-20b:free",
