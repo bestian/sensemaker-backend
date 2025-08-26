@@ -456,13 +456,21 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 clearInterval(pollingInterval);
             }
             
-            // 開始輪詢，每20秒檢查一次
-            pollingInterval = setInterval(async () => {
-                await checkTaskResult(taskId);
-            }, 20000);
+            // 延遲5分鐘後開始輪詢，每1分鐘檢查一次
+            setTimeout(() => {
+                console.log('開始輪詢任務結果...');
+                
+                // 開始輪詢，每1分鐘檢查一次
+                pollingInterval = setInterval(async () => {
+                    await checkTaskResult(taskId);
+                }, 60000); // 60秒 = 1分鐘
+                
+                // 立即檢查一次
+                checkTaskResult(taskId);
+            }, 300000); // 300秒 = 5分鐘
             
-            // 立即檢查一次
-            checkTaskResult(taskId);
+            // 顯示延遲提示
+            updatePollingStatus(`任務已加入隊列，將在5分鐘後開始檢查結果...`);
         }
         
         async function checkTaskResult(taskId) {
