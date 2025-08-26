@@ -117,7 +117,7 @@ sensemaker-backend/
 
 2. **部署項目**
    ```bash
-   npm run deploy
+   sh ./deploy-queue-safe.sh
    ```
 
 #### 部署配置
