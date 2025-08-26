@@ -339,6 +339,7 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             <button onclick="testLLM()" class="test-btn">🧠 測試 LLM</button>
             <button onclick="testCSV()" class="test-btn">📊 測試 CSV</button>
             <button onclick="testR2()" class="test-btn">☁️ 測試 R2</button>
+            <button id="downloadMarkdownBtn" onclick="downloadMarkdown()" class="test-btn" style="display: none;" disabled>⬇️ 下載 Markdown</button>
         </div>
     </div>
 
@@ -352,6 +353,7 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
         
         let currentTaskId = null;
         let pollingInterval = null;
+        let latestSummaryMarkdown = '';
         
         document.getElementById('apiForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -378,6 +380,9 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             
             // 隱藏之前的結果
             resultDiv.style.display = 'none';
+            // 重置下載按鈕狀態
+            latestSummaryMarkdown = '';
+            setDownloadButtonVisible(false);
             
             // 禁用提交按鈕
             submitBtn.disabled = true;
@@ -456,7 +461,7 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 clearInterval(pollingInterval);
             }
             
-            // 延遲5分鐘後開始輪詢，每1分鐘檢查一次
+            // 延遲3分鐘後開始輪詢，每1分鐘檢查一次
             setTimeout(() => {
                 console.log('開始輪詢任務結果...');
                 
@@ -467,10 +472,10 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                 
                 // 立即檢查一次
                 checkTaskResult(taskId);
-            }, 300000); // 300秒 = 5分鐘
+            }, 180000); // 180秒 = 3分鐘
             
             // 顯示延遲提示
-            updatePollingStatus(`任務已加入隊列，將在5分鐘後開始檢查結果...`);
+            updatePollingStatus(`任務已加入隊列，將在3分鐘後開始檢查結果...`);
         }
         
         async function checkTaskResult(taskId) {
@@ -520,6 +525,9 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             // 使用 Markdown 渲染摘要內容
             const summaryMarkdown = result.summary || '';
             const renderedSummary = marked.parse(summaryMarkdown);
+            // 儲存 Markdown 字串並啟用下載按鈕
+            latestSummaryMarkdown = summaryMarkdown;
+            setDownloadButtonVisible(summaryMarkdown.trim().length > 0);
             
             const resultHtml = `
                 <h2>✅ 分析完成！</h2>
@@ -550,6 +558,36 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
             resultDiv.className = `result ${type}`;
             resultDiv.style.display = 'block';
             resultDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function setDownloadButtonVisible(visible) {
+            const btn = document.getElementById('downloadMarkdownBtn');
+            if (!btn) return;
+            btn.style.display = visible ? 'inline-block' : 'none';
+            btn.disabled = !visible;
+        }
+
+        function downloadMarkdown() {
+            try {
+                if (!latestSummaryMarkdown || latestSummaryMarkdown.trim().length === 0) {
+                    showResult('❌ 沒有可下載的 Markdown 內容', 'error');
+                    return;
+                }
+                const taskId = currentTaskId || 'result';
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                const filename = `sensemake-summary-${taskId}-${timestamp}.md`;
+                const blob = new Blob([latestSummaryMarkdown], { type: 'text/markdown;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                showResult(`❌ 下載失敗: ${error.message}`, 'error');
+            }
         }
         
         // 健康檢查
