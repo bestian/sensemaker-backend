@@ -17,6 +17,6 @@
 		"wrangler": "^3.101.0"
 	},
 	"dependencies": {
-		"sensemaking-tools": "file:../sensemaking-tools/library/sensemaking-tools-1.0.0.tgz"
+		"sensemaking-tools": "file:./sensemaking-tools-1.0.2.tgz"
 	}
 }

@@ -71,22 +71,6 @@ npm run dev
 
 
 
-安裝lite-server：
-
-```bash
-npm install -g lite-server
-```
-
-啟動測試前端：
-```bash
-lite-server
-```
-
-訪問
-```bash
-http://localhost:3000/test-api.html
-```
-
 #### 其他開發命令
 
 - **啟動服務**: `npm start` (等同於 `npm run dev`)
