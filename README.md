@@ -315,7 +315,7 @@ sensemaker-backend/
 
 2. **Deploy the project**
    ```bash
-   npm run deploy
+   sh ./deploy-queue-safe.sh
    ```
 
 #### Deployment Configuration
