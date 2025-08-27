@@ -403,9 +403,9 @@ curl -X POST \
 
 #### CSV Format
 ```csv
-comment-id,comment_text,agrees,disagrees,passes
-comment-1,This product is really great and very convenient to use,15,2,1
-comment-2,The interface design is beautiful and functional,12,1,0
+comment-id,comment_text,agrees,disagrees,passes,votes
+comment-1,This product is really great and very convenient to use,15,2,1,18
+comment-2,The interface design is beautiful and functional,12,1,0,13
 ```
 
 ### Troubleshooting
