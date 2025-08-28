@@ -3,6 +3,7 @@ import type { ExportedHandler, ExecutionContext, Queue, MessageBatch } from '@cl
 import { Sensemaker, OpenRouterModel, SummarizationType, VoteTally } from 'sensemaking-tools';
 import type { Comment, Topic } from 'sensemaking-tools';
 import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_utils';
+import { parseJSONFile } from './utils/parseJSON';
 
 /**
  * Sensemaker Backend API with Queue Support
@@ -64,25 +65,76 @@ function toVoteTally(v: any): any {
   }
 }
 
+// 為 Queue 序列化準備的版本，只包含數值，不包含函數
+function toVoteTallyForQueue(v: any): any {
+  if (!v) return undefined;
+  const agree = v.agreeCount ?? v.agrees ?? v.agree ?? 0;
+  const disagree = v.disagreeCount ?? v.disagrees ?? v.disagree ?? 0;
+  const pass = v.passCount ?? v.passes ?? v.pass ?? 0;
+  
+  return {
+    agreeCount: agree,
+    disagreeCount: disagree,
+    passCount: pass,
+    // 不包含函數，只包含數值
+  };
+}
+
 function normalizeCommentsVoteInfo(comments: Comment[]): Comment[] {
   return comments.map((c: any) => {
     if (!c?.voteInfo) return c;
+    
+    // 創建新的物件，避免修改原始物件
+    const newComment = { ...c };
     const vi = c.voteInfo;
+    
     if (typeof vi === 'object' && vi !== null) {
       if (typeof vi.getTotalCount === 'function' || vi.constructor?.name === 'VoteTally') {
-        return c; // 已是可用的 VoteTally
+        return newComment; // 已是可用的 VoteTally
       }
+      
       // 可能是群組 { groupA: {...}, groupB: {...} } 或單一 tally 物件
       const isGroup = Object.values(vi).every((x: any) => typeof x === 'object');
       if (isGroup) {
-        c.voteInfo = Object.fromEntries(
+        newComment.voteInfo = Object.fromEntries(
           Object.entries(vi).map(([k, val]: any) => [k, toVoteTally(val)])
         );
       } else {
-        c.voteInfo = toVoteTally(vi);
+        newComment.voteInfo = toVoteTally(vi);
       }
     }
-    return c;
+    
+    return newComment;
+  });
+}
+
+// 為 Queue 序列化準備的版本，移除所有函數
+function normalizeCommentsForQueue(comments: Comment[]): Comment[] {
+  return comments.map((c: any) => {
+    if (!c?.voteInfo) return c;
+    
+    // 創建新的物件，避免修改原始物件
+    const newComment = { ...c };
+    const vi = c.voteInfo;
+    
+    if (typeof vi === 'object' && vi !== null) {
+      if (typeof vi.getTotalCount === 'function' || vi.constructor?.name === 'VoteTally') {
+        // 如果是 VoteTally 物件，轉換為純數值物件
+        newComment.voteInfo = toVoteTallyForQueue(vi);
+      } else {
+        // 可能是群組 { groupA: {...}, groupB: {...} } 或單一 tally 物件
+        const isGroup = Object.values(vi).every((x: any) => typeof x === 'object');
+        if (isGroup) {
+          newComment.voteInfo = Object.fromEntries(
+            Object.entries(vi).map(([k, val]: any) => [k, toVoteTallyForQueue(val)])
+          );
+        } else {
+          newComment.voteInfo = toVoteTallyForQueue(vi);
+        }
+      }
+    }
+    
+    return newComment;
   });
 }
 
@@ -193,6 +245,11 @@ export default {
 				return await handleTestCsvRequest(request, env, corsHeaders);
 			}
 
+			// JSON 解析測試端點
+			if (path === '/api/test-json' && request.method === 'POST') {
+				return await handleTestJsonRequest(request, env, corsHeaders);
+			}
+
 			// R2 讀寫測試端點
 			if (path === '/api/test-r2' && request.method === 'POST') {
 				return await handleTestR2Request(request, env, corsHeaders);
@@ -234,7 +291,7 @@ export default {
 				// 更新任務狀態為處理中
 				await updateTaskStatus(env, task.taskId, 'processing', 1);
 				
-				// 處理任務
+				// 處理任務，重新創建可用的 VoteTally 物件
 				await processSensemakeTask(
 					task.taskId,
 					normalizeCommentsVoteInfo(task.comments) as any,
@@ -361,8 +418,8 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			);
 		}
 
-		// 標準化 voteInfo，確保具備 getTotalCount
-		comments = normalizeCommentsVoteInfo(comments) as any;
+		// 為 Queue 序列化準備，移除所有函數，只保留數值
+		comments = normalizeCommentsForQueue(comments) as any;
 
 		// 生成唯一的任務 ID
 		const taskId = generateTaskId();
@@ -745,29 +802,189 @@ function generateTaskId(): string {
 	return `task-${timestamp}-${random}`;
 }
 
+
+
 /**
- * 解析 JSON 文件
+ * 處理 JSON 解析測試請求
  */
-async function parseJSONFile(file: File): Promise<Comment[]> {
-	const jsonText = await file.text();
-	const jsonData = JSON.parse(jsonText);
-	
-	if (Array.isArray(jsonData)) {
-		return jsonData.map((item, index) => ({
-			id: item.id || `comment-${index}`,
-			text: item.text || item.comment_text || '',
-			voteInfo: item.voteInfo || item.votes || undefined,
-			topics: item.topics || undefined
-		}));
-	} else if (jsonData.comments && Array.isArray(jsonData.comments)) {
-		return jsonData.comments.map((item: any, index: number) => ({
-			id: item.id || `comment-${index}`,
-			text: item.text || item.comment_text || '',
-			voteInfo: item.voteInfo || item.votes || undefined,
-			topics: item.topics || undefined
-		}));
-	} else {
-		throw new Error('Invalid JSON format: expected array of comments or object with comments array');
+async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+	try {
+		// 解析請求體
+		const formData = await request.formData();
+		const file = formData.get('file') as File;
+
+		if (!file) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Missing File', 
+					message: 'No file provided in the request' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		// 檢查文件類型
+		if (!file.name.endsWith('.json')) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Invalid File Type', 
+					message: 'Only JSON files are supported for this test endpoint' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		console.log('=== JSON 解析測試開始 ===');
+		console.log('文件名:', file.name);
+		console.log('文件大小:', file.size, 'bytes');
+
+		// 解析 JSON 文件
+		const comments = await parseJSONFile(file);
+		
+		// 標準化 voteInfo，確保具備可用的 VoteTally 物件
+		const normalizedComments = normalizeCommentsVoteInfo(comments);
+		
+		console.log('=== JSON 解析結果 ===');
+		console.log('解析的評論數量:', comments.length);
+		console.log('標準化後的評論數量:', normalizedComments.length);
+		
+		// 調試：檢查第一個評論的 voteInfo 結構
+		if (normalizedComments.length > 0) {
+			const firstComment = normalizedComments[0];
+			console.log('第一個評論的 voteInfo:', {
+				hasVoteInfo: !!firstComment.voteInfo,
+				voteInfoType: typeof firstComment.voteInfo,
+				voteInfoKeys: firstComment.voteInfo ? Object.keys(firstComment.voteInfo) : [],
+				hasGetTotalCount: firstComment.voteInfo ? typeof (firstComment.voteInfo as any).getTotalCount === 'function' : false,
+				agreeCount: firstComment.voteInfo ? (firstComment.voteInfo as any).agreeCount : 'undefined',
+				disagreeCount: firstComment.voteInfo ? (firstComment.voteInfo as any).disagreeCount : 'undefined',
+				passCount: firstComment.voteInfo ? (firstComment.voteInfo as any).passCount : 'undefined'
+			});
+		}
+		
+		// 詳細記錄每個評論的投票信息
+		normalizedComments.forEach((comment, index) => {
+			console.log(`評論 ${index + 1}:`, {
+				id: comment.id,
+				text: comment.text?.substring(0, 50) + '...',
+				hasVoteInfo: !!comment.voteInfo,
+				voteInfoType: typeof comment.voteInfo,
+				voteInfoKeys: comment.voteInfo ? Object.keys(comment.voteInfo) : []
+			});
+			
+			if (comment.voteInfo) {
+				// 檢查是否為群組投票格式（對象有多個鍵）還是簡單投票格式
+				const hasVoteCounts = 'agreeCount' in comment.voteInfo && 'disagreeCount' in comment.voteInfo && 'passCount' in comment.voteInfo;
+				
+				if (hasVoteCounts) {
+					// 簡單投票格式（包含 agreeCount, disagreeCount, passCount）
+					const voteData = comment.voteInfo as any;
+					console.log(`  簡單投票:`, {
+						agreeCount: voteData.agreeCount,
+						disagreeCount: voteData.disagreeCount,
+						passCount: voteData.passCount,
+						totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+						hasGetTotalCount: !!voteData.getTotalCount,
+						constructor: voteData.constructor?.name || 'Unknown'
+					});
+				} else {
+					// 群組投票格式（對象有多個鍵，每個鍵都是投票資料）
+					Object.entries(comment.voteInfo).forEach(([key, voteData]) => {
+						console.log(`  群組 ${key}:`, {
+							agreeCount: (voteData as any).agreeCount,
+							disagreeCount: (voteData as any).disagreeCount,
+							passCount: (voteData as any).passCount,
+							totalCount: (voteData as any).getTotalCount ? (voteData as any).getTotalCount(true) : 'N/A',
+							hasGetTotalCount: !!(voteData as any).getTotalCount,
+							constructor: (voteData as any).constructor?.name || 'Unknown'
+						});
+					});
+				}
+			}
+		});
+
+		// 返回詳細的解析結果
+		return new Response(
+			JSON.stringify({
+				success: true,
+				fileName: file.name,
+				fileSize: file.size,
+				commentsCount: normalizedComments.length,
+				comments: normalizedComments.map(comment => ({
+					id: comment.id,
+					text: comment.text,
+					voteInfo: comment.voteInfo ? (() => {
+						// 直接使用標準化後的 voteInfo，它應該已經有正確的結構
+						const voteData = comment.voteInfo as any;
+						
+						// 檢查是否有 getTotalCount 方法
+						if (typeof voteData.getTotalCount === 'function') {
+							return {
+								agreeCount: voteData.agreeCount,
+								disagreeCount: voteData.disagreeCount,
+								passCount: voteData.passCount,
+								totalCount: voteData.getTotalCount(true),
+								hasGetTotalCount: true
+							};
+						} else {
+							// 如果沒有 getTotalCount 方法，可能是群組格式
+							return Object.fromEntries(
+								Object.entries(comment.voteInfo).map(([key, voteData]) => [
+									key,
+									{
+										agreeCount: (voteData as any).agreeCount,
+										disagreeCount: (voteData as any).disagreeCount,
+										passCount: (voteData as any).passCount,
+										totalCount: (voteData as any).getTotalCount ? (voteData as any).getTotalCount(true) : 'N/A',
+										hasGetTotalCount: !!(voteData as any).getTotalCount
+									}
+								])
+							);
+						}
+					})() : undefined
+				})),
+				debug: {
+					lastModified: file.lastModified,
+					type: file.type
+				}
+			}, null, 2),
+			{
+				status: 200,
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				}
+			}
+		);
+
+	} catch (error) {
+		console.error('Error in JSON test processing:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'JSON Test Error', 
+				message: error instanceof Error ? error.message : 'Unknown JSON test error',
+				stack: error instanceof Error ? error.stack : undefined
+			}), 
+			{ 
+				status: 500, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
 	}
 }
 
@@ -874,12 +1091,11 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 					text: comment.text,
 					voteInfo: comment.voteInfo ? (() => {
 						// 檢查是否為群組投票格式還是簡單投票格式
-						if (comment.voteInfo.constructor?.name === 'VoteTally') {
-							// 簡單投票格式
+						const hasVoteCounts = 'agreeCount' in comment.voteInfo && 'disagreeCount' in comment.voteInfo && 'passCount' in comment.voteInfo;
+						
+						if (hasVoteCounts) {
+							// 簡單投票格式（包含 agreeCount, disagreeCount, passCount）
 							const voteData = comment.voteInfo as any;
-
-							console.log(typeof voteData.getTotalCount);
-
 							return {
 								agreeCount: voteData.agreeCount,
 								disagreeCount: voteData.disagreeCount,
@@ -889,17 +1105,17 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 								getTotalCount: voteData.getTotalCount
 							};
 						} else {
-							// 群組投票格式
+							// 群組投票格式（對象有多個鍵，每個鍵都是投票資料）
 							return Object.fromEntries(
 								Object.entries(comment.voteInfo).map(([key, voteData]) => [
 									key,
 									{
-										agreeCount: voteData.agreeCount,
-										disagreeCount: voteData.disagreeCount,
-										passCount: voteData.passCount,
-										totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
-										hasGetTotalCount: !!voteData.getTotalCount,
-										getTotalCount: voteData.getTotalCount
+										agreeCount: (voteData as any).agreeCount,
+										disagreeCount: (voteData as any).disagreeCount,
+										passCount: (voteData as any).passCount,
+										totalCount: (voteData as any).getTotalCount ? (voteData as any).getTotalCount(true) : 'N/A',
+										hasGetTotalCount: !!(voteData as any).getTotalCount,
+										getTotalCount: (voteData as any).getTotalCount
 									}
 								])
 							);

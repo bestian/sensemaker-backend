@@ -30,6 +30,59 @@ curl http://localhost:8787/api/test
 }
 ```
 
+#### JSON 上傳測試端點
+
+**測試 JSON 檔案解析功能：**
+
+```bash
+# 測試標準 JSON 格式
+curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-json \
+  -F "file=@test-comments.json"
+
+# 測試 Polis.tw 格式的 JSON
+curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-json \
+  -F "file=@files/polis_report.json"
+
+# 本地開發環境測試
+curl -X POST http://localhost:8787/api/test-json \
+  -F "file=@files/polis_report.json"
+```
+
+**測試檔案格式：**
+
+1. **標準格式** (`test-comments.json`):
+```json
+[
+  {
+    "id": "comment-1",
+    "text": "這個產品真的很棒，使用起來非常方便！",
+    "voteInfo": {
+      "agreeCount": 15,
+      "disagreeCount": 2,
+      "passCount": 1
+    }
+  }
+]
+```
+
+2. **Polis.tw 格式** (`files/polis_report.json`):
+```json
+[
+  {
+    "txt": "我認為，台灣目前的自學法規是成熟且可靠的。",
+    "tid": 1,
+    "agree_count": 7,
+    "disagree_count": 1,
+    "pass_count": 2,
+    "count": 10
+  }
+]
+```
+
+**預期回應：**
+- 成功：HTTP 200，包含解析後的評論資料
+- 失敗：HTTP 400/500，包含錯誤訊息
+
 #### LLM 測試端點
 ```bash
 curl -X POST http://localhost:8787/api/test-llm
