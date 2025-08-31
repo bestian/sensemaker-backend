@@ -121,6 +121,11 @@ export function convertCSV_new(rows: CSVRow[]): ConversionResult {
     if (!updatedFieldnames.includes('passes')) {
       updatedFieldnames.push('passes');
     }
+    
+    // 如果進行了欄位重命名，需要更新 fieldnames
+    if (fieldnames.includes('comment-body') && !updatedFieldnames.includes('comment_text')) {
+      updatedFieldnames.push('comment_text');
+    }
 
     console.log(`更新後的欄位: ${updatedFieldnames}`);
 

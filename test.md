@@ -30,6 +30,192 @@ curl http://localhost:8787/api/test
 }
 ```
 
+
+#### CSV 上傳測試端點
+
+**測試新的 CSV 解析功能（支援多種格式）：**
+
+```bash
+# 遠端測試 - 完整格式 CSV
+curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-csv \
+  -F "file=@files/comments.csv"
+
+# 遠端測試 - pol.is 格式 CSV
+curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-csv \
+  -F "file=@files/polis_test.csv"
+
+# 本地開發環境測試
+curl -X POST http://localhost:8787/api/test-csv \
+  -F "file=@files/comments.csv"
+```
+
+**測試檔案格式：**
+
+1. **完整格式** (`files/comments.csv`):
+```csv
+comment-id,comment_text,votes,agrees,disagrees,passes,a-votes,a-agree-count,a-disagree-count,a-pass-count,b-votes,b-agree-count,b-disagree-count,b-pass-count
+1,"我認為，台灣目前的自學法規是成熟且可靠的。",10,7,1,2,0,0,0,0,0,0,0,0
+2,"我認為，台灣的自學審議機制是合理並可以信任的。",9,7,0,2,0,0,0,0,0,0,0,0
+```
+
+2. **pol.is 格式** (`files/polis_test.csv`):
+```csv
+comment-id,agrees,disagrees,comment-body,moderated
+1,7,1,"我認為，台灣目前的自學法規是成熟且可靠的。",1
+2,7,0,"我認為，台灣的自學審議機制是合理並可以信任的。",1
+```
+
+**新功能特點：**
+
+1. **自動格式偵測**：
+   - 偵測 `pol.is` 格式：包含 `comment-id`, `agrees`, `disagrees`, `comment-body` 欄位
+   - 偵測完整格式：包含 `comment-id`, `comment_text`, `agrees`, `disagrees`, `passes` 欄位
+   - 未知格式：嘗試基本解析
+
+2. **pol.is 格式轉換**：
+   - 自動將 `comment-body` 重命名為 `comment_text`
+   - 根據 `moderated` 欄位計算 `passes` 值
+   - 計算 `votes = agrees + disagrees + passes`
+
+3. **群組投票支援**：
+   - 支援 `{group}-agree-count`, `{group}-disagree-count`, `{group}-pass-count` 格式
+   - 自動偵測群組名稱並創建群組投票物件
+
+**預期回應：**
+
+成功時（HTTP 200）：
+```json
+{
+  "success": true,
+  "fileName": "comments.csv",
+  "fileSize": 1234,
+  "commentsCount": 16,
+  "comments": [
+    {
+      "id": "1",
+      "text": "我認為，台灣目前的自學法規是成熟且可靠的。",
+      "voteInfo": {
+        "agreeCount": 7,
+        "disagreeCount": 1,
+        "passCount": 2,
+        "totalCount": 10,
+        "hasGetTotalCount": true
+      }
+    }
+  ],
+  "debug": {
+    "lastModified": 1234567890,
+    "type": "text/csv"
+  }
+}
+```
+
+失敗時（HTTP 400/500）：
+```json
+{
+  "error": "CSV Test Error",
+  "message": "具體錯誤訊息"
+}
+```
+
+**測試步驟：**
+
+1. **準備測試檔案**：
+   ```bash
+   # 確保測試檔案存在
+   ls -la files/comments.csv
+   ls -la files/polis_test.csv
+   ```
+
+2. **測試完整格式**：
+   ```bash
+   curl -X POST http://localhost:8787/api/test-csv \
+     -F "file=@files/comments.csv" | jq
+   ```
+
+3. **測試 pol.is 格式**：
+   ```bash
+   curl -X POST http://localhost:8787/api/test-csv \
+     -F "file=@files/polis_test.csv" | jq
+   ```
+
+4. **檢查轉換結果**：
+   - 確認 `comment-body` 是否正確轉換為 `comment_text`
+   - 確認 `passes` 欄位是否正確計算
+   - 確認 `votes` 欄位是否正確計算
+   - 確認 `voteInfo` 物件是否包含 `getTotalCount` 方法
+
+**自動化測試腳本：**
+
+我們提供了一個自動化測試腳本來驗證 CSV 解析功能：
+
+```bash
+# 執行自動化測試
+./test-csv-parsing.sh
+```
+
+這個腳本會：
+1. 檢查測試檔案是否存在
+2. 檢查本地伺服器是否運行
+3. 測試完整格式 CSV 解析
+4. 測試 pol.is 格式 CSV 解析
+5. 驗證轉換結果
+
+**除錯技巧：**
+
+1. **查看伺服器日誌**：
+   ```bash
+   # 本地開發時查看 console.log 輸出
+   npm run dev
+   ```
+
+2. **檢查格式偵測**：
+   - 日誌中會顯示 "Detected pol.is format" 或 "Detected complete format"
+   - 確認格式偵測是否正確
+
+**總結：**
+
+新的 CSV 解析功能提供了以下改進：
+
+1. **模組化設計**：
+   - `readCSVFile()` - 負責檔案讀取
+   - `detectCSVFormat()` - 負責格式偵測
+   - `parseCSVData()` - 負責數據解析
+
+2. **多格式支援**：
+   - 自動偵測 pol.is 格式並進行轉換
+   - 支援完整格式的直接解析
+   - 支援群組投票格式
+
+3. **向後相容**：
+   - 保持原有的 API 介面不變
+   - 現有的測試端點仍然可用
+
+4. **易於測試**：
+   - 提供詳細的測試說明
+   - 包含自動化測試腳本
+   - 支援遠端和本地測試
+
+**常見問題和解決方案：**
+
+1. **JSON 解析錯誤**：
+   - 問題：`jq: parse error: Invalid string: control characters from U+0000 through U+001F must be escaped`
+   - 解決方案：測試腳本已更新，包含錯誤處理和 JSON 驗證
+
+2. **欄位重命名問題**：
+   - 問題：`comment-body` 重命名為 `comment_text` 後，欄位名稱列表未更新
+   - 解決方案：已修復 `convertCSV_new` 函式，確保欄位重命名後正確更新 `fieldnames`
+
+3. **格式偵測問題**：
+   - 問題：某些 pol.is 變體格式未被正確偵測
+   - 解決方案：已增強 `detectCSVFormat` 函式，支援包含額外欄位的 pol.is 變體
+
+**測試建議：**
+
+1. **開發階段**：使用本地測試和自動化腳本
+2. **部署前**：使用遠端測試驗證生產環境
+3. **問題排查**：查看伺服器日誌和測試回應
+4. **格式驗證**：確認轉換後的數據結構正確
 #### JSON 上傳測試端點
 
 **測試 JSON 檔案解析功能：**

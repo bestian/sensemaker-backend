@@ -1004,28 +1004,30 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 					id: comment.id,
 					text: comment.text,
 					voteInfo: comment.voteInfo ? (() => {
-						// 檢查是否為群組投票格式還是簡單投票格式
-						if (comment.voteInfo.constructor?.name === 'VoteTally') {
-							// 簡單投票格式
+						// 檢查是否為 VoteTally 物件（有 getTotalCount 方法）
+						if (typeof (comment.voteInfo as any).getTotalCount === 'function') {
+							// VoteTally 物件格式
 							const voteData = comment.voteInfo as any;
 							return {
 								agreeCount: voteData.agreeCount,
 								disagreeCount: voteData.disagreeCount,
 								passCount: voteData.passCount,
-								totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
-								hasGetTotalCount: !!voteData.getTotalCount
+								totalCount: voteData.getTotalCount(true),
+								hasGetTotalCount: true,
+								getTotalCount: voteData.getTotalCount
 							};
 						} else {
-							// 群組投票格式
+							// 群組投票格式（對象有多個鍵，每個鍵都是投票資料）
 							return Object.fromEntries(
 								Object.entries(comment.voteInfo).map(([key, voteData]) => [
 									key,
 									{
-										agreeCount: voteData.agreeCount,
-										disagreeCount: voteData.disagreeCount,
-										passCount: voteData.passCount,
-										totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
-										hasGetTotalCount: !!voteData.getTotalCount
+										agreeCount: (voteData as any).agreeCount,
+										disagreeCount: (voteData as any).disagreeCount,
+										passCount: (voteData as any).passCount,
+										totalCount: (voteData as any).getTotalCount ? (voteData as any).getTotalCount(true) : 'N/A',
+										hasGetTotalCount: !!(voteData as any).getTotalCount,
+										getTotalCount: (voteData as any).getTotalCount
 									}
 								])
 							);
