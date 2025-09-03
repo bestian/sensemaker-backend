@@ -166,7 +166,7 @@ function getCorsHeaders(origin: string, isDevelopment: boolean) {
 	if (isDevelopment && origin.includes('localhost')) {
 		return {
 			'Access-Control-Allow-Origin': origin,
-			'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+			'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 			'Access-Control-Max-Age': '86400', // 24 hours
 			'Vary': 'Origin',
@@ -176,7 +176,7 @@ function getCorsHeaders(origin: string, isDevelopment: boolean) {
 	// 生產環境：嚴格控制
 	return {
 		'Access-Control-Allow-Origin': isAllowed ? origin : 'null',
-		'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+		'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 		'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 		'Access-Control-Max-Age': '86400', // 24 hours
 		'Vary': 'Origin',
@@ -228,6 +228,11 @@ export default {
 			// 獲取處理結果的端點
 			if (path.startsWith('/api/sensemake/result/') && request.method === 'GET') {
 				return await handleGetResultRequest(request, url, env, corsHeaders);
+			}
+
+			// 刪除任務報告的端點
+			if (path.startsWith('/api/sensemake/delete/') && request.method === 'DELETE') {
+				return await handleDeleteTaskRequest(request, url, env, corsHeaders);
 			}
 
 			// 簡單的 LLM 測試端點
@@ -781,6 +786,101 @@ async function handleGetResultRequest(request: Request, url: URL, env: Env, cors
 			JSON.stringify({ 
 				error: 'Result Fetch Error', 
 				message: error instanceof Error ? error.message : 'Unknown error fetching result' 
+			}), 
+			{ 
+				status: 500, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+}
+
+/**
+ * 處理刪除任務報告的請求
+ */
+async function handleDeleteTaskRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+	try {
+		// 從 URL 路徑中提取任務 ID
+		const pathParts = url.pathname.split('/');
+		const taskId = pathParts[pathParts.length - 1];
+		
+		if (!taskId) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Missing Task ID', 
+					message: 'Task ID is required' 
+				}), 
+				{ 
+					status: 400, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		console.log(`Deleting task report: ${taskId}`);
+
+		// 從 R2 中刪除結果
+		const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
+		
+		// 檢查文件是否存在
+		const object = await bucket.get(`${taskId}.json`);
+		if (!object) {
+			return new Response(
+				JSON.stringify({ 
+					error: 'Task Not Found', 
+					message: 'Task report not found',
+					taskId: taskId,
+					status: 'not_found'
+				}), 
+				{ 
+					status: 404, 
+					headers: { 
+						'Content-Type': 'application/json',
+						...corsHeaders,
+					} 
+				}
+			);
+		}
+
+		// 刪除文件
+		await bucket.delete(`${taskId}.json`);
+		// 同時刪除狀態文件（如果存在）
+		try {
+			await bucket.delete(`${taskId}-status.json`);
+		} catch (statusError) {
+			// 狀態文件可能不存在，忽略錯誤
+			console.log(`Status file ${taskId}-status.json not found or already deleted`);
+		}
+		console.log(`Task report ${taskId} deleted successfully`);
+
+		// 返回成功響應
+		return new Response(
+			JSON.stringify({
+				success: true,
+				message: 'Task report deleted successfully',
+				taskId: taskId
+			}),
+			{
+				status: 200,
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				}
+			}
+		);
+
+	} catch (error) {
+		console.error('Error deleting task report:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'Delete Error', 
+				message: error instanceof Error ? error.message : 'Unknown error deleting task report' 
 			}), 
 			{ 
 				status: 500, 
