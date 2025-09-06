@@ -12,12 +12,15 @@
 // permissions and limitations under the License.
 
 // 這個文件包含了 sensemaker-backend 的 CSV 解析工具
+// This file contains CSV parsing utilities for sensemaker-backend
 // 參考 sensemaking-tools/library/runner-cli/runner_openrouter_utils.ts 的實現
+// Referenced implementation from sensemaking-tools/library/runner-cli/runner_openrouter_utils.ts
 
 import { Comment, Topic, VoteTally } from 'sensemaking-tools';
 import { convertCSV_new, CSVRow } from './csv_converter_new';
 
 // 類型定義，參考 runner_openrouter_utils.ts
+// Type definitions, referenced from runner_openrouter_utils.ts
 export type CoreCommentCsvRow = {
   index?: number;
   timestamp?: number;
@@ -29,12 +32,13 @@ export type CoreCommentCsvRow = {
   moderated?: number;
   comment_text: string;
   passes: number;
-  topics?: string; // 可以包含主題和子主題
+  topics?: string; // 可以包含主題和子主題 / Can contain topics and subtopics
   topic?: string;
   subtopic?: string;
 };
 
 // 分組投票的鍵名格式
+// Grouped voting key name format
 export type VoteTallyGroupKey = `${string}-agree-count` | `${string}-disagree-count` | `${string}-pass-count`;
 
 export interface VoteTallyCsvRow {
@@ -42,12 +46,15 @@ export interface VoteTallyCsvRow {
 }
 
 // 完整的 CSV 行類型
+// Complete CSV row type
 export type CommentCsvRow = VoteTallyCsvRow & CoreCommentCsvRow;
 
 // CSV 格式類型
+// CSV format types
 export type CSVFormat = 'pol.is' | 'complete' | 'unknown';
 
 // CSV 解析結果
+// CSV parsing result
 export interface CSVParseResult {
   headers: string[];
   rows: CSVRow[];
@@ -61,6 +68,7 @@ export interface CSVParseResult {
 
 /**
  * 讀取 CSV 文件並返回原始數據
+ * Read CSV file and return raw data
  */
 export async function readCSVFile(file: File): Promise<{ headers: string[]; rows: CSVRow[] }> {
   const csvText = await file.text();
@@ -94,12 +102,14 @@ export async function readCSVFile(file: File): Promise<{ headers: string[]; rows
 
 /**
  * 偵測 CSV 格式
+ * Detect CSV format
  */
 export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
   console.log('Detecting CSV format...');
   console.log('Headers:', headers);
   
   // 檢查是否為 pol.is 格式（必須包含這些欄位）
+  // Check if it's pol.is format (must contain these columns)
   const polIsRequiredColumns = ['comment-id', 'agrees', 'disagrees', 'comment-body'];
   const hasPolIsColumns = polIsRequiredColumns.every(col => headers.includes(col));
   
@@ -109,6 +119,7 @@ export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
   }
   
   // 檢查是否為完整格式（包含所有必要欄位）
+  // Check if it's complete format (contains all required columns)
   const completeRequiredColumns = ['comment-id', 'comment_text', 'agrees', 'disagrees', 'passes'];
   const hasCompleteColumns = completeRequiredColumns.every(col => headers.includes(col));
   
@@ -118,6 +129,7 @@ export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
   }
   
   // 檢查是否有 comment-body 欄位（可能是其他 pol.is 變體）
+  // Check if there's comment-body column (might be other pol.is variant)
   if (headers.includes('comment-body')) {
     console.log('Detected pol.is variant format (with comment-body)');
     return 'pol.is';
@@ -129,12 +141,14 @@ export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
 
 /**
  * 根據格式解析 CSV 數據
+ * Parse CSV data according to format
  */
 export function parseCSVData(headers: string[], rows: CSVRow[], format: CSVFormat): CSVParseResult {
   console.log(`Parsing CSV data with format: ${format}`);
   
   if (format === 'pol.is') {
     // 使用 convertCSV_new 轉換 pol.is 格式
+    // Use convertCSV_new to convert pol.is format
     console.log('Converting pol.is format using convertCSV_new...');
     const conversionResult = convertCSV_new(rows);
     
@@ -146,11 +160,12 @@ export function parseCSVData(headers: string[], rows: CSVRow[], format: CSVForma
     return {
       headers: conversionResult.fieldnames || headers,
       rows: conversionResult.rows || rows,
-      format: 'complete', // 轉換後變成完整格式
+      format: 'complete', // 轉換後變成完整格式 / Converted to complete format
       stats: conversionResult.stats
     };
   } else if (format === 'complete') {
     // 完整格式，直接使用
+    // Complete format, use directly
     console.log('Using complete format directly');
     return {
       headers,
@@ -159,6 +174,7 @@ export function parseCSVData(headers: string[], rows: CSVRow[], format: CSVForma
     };
   } else {
     // 未知格式，嘗試基本解析
+    // Unknown format, attempt basic parsing
     console.log('Unknown format, attempting basic parsing');
     return {
       headers,
@@ -170,30 +186,38 @@ export function parseCSVData(headers: string[], rows: CSVRow[], format: CSVForma
 
 /**
  * 解析 CSV 文件，支持完整的 comments.csv 格式
+ * Parse CSV file, supporting complete comments.csv format
  * 包括分組投票和主題信息
+ * Including grouped voting and topic information
  */
 export async function parseCSVFile(file: File): Promise<Comment[]> {
   // 1. 讀取 CSV 文件
+  // 1. Read CSV file
   const { headers, rows } = await readCSVFile(file);
   
   // 2. 偵測 CSV 格式
+  // 2. Detect CSV format
   const format = detectCSVFormat(headers, rows);
   
   // 3. 根據格式解析數據
+  // 3. Parse data according to format
   const parseResult = parseCSVData(headers, rows, format);
   
   // 4. 將解析結果轉換為 Comment 物件
+  // 4. Convert parsing result to Comment objects
   return convertToComments(parseResult.headers, parseResult.rows);
 }
 
 /**
  * 將解析後的 CSV 數據轉換為 Comment 物件陣列
+ * Convert parsed CSV data to Comment object array
  */
 function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   console.log('Converting CSV rows to Comment objects...');
   console.log('Headers:', headers);
   
   // 查找必要的列
+  // Find necessary columns
   const idIndex = headers.findIndex(h => h === 'comment-id' || h === 'id');
   const textIndex = headers.findIndex(h => h === 'comment_text' || h === 'text');
   
@@ -208,6 +232,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   }
 
   // 查找投票相關列
+  // Find voting-related columns
   const voteColumns = headers.filter(h => 
     h.includes('-agree-count') || 
     h.includes('-disagree-count') || 
@@ -220,6 +245,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   console.log('Vote columns found:', voteColumns);
 
   // 檢查是否有群組信息（必須包含 -agree-count 格式的欄位）
+  // Check if there's group information (must contain -agree-count format columns)
   const hasGroupInfo = voteColumns.some(col => col.includes('-agree-count'));
   const hasSimpleVotes = voteColumns.some(col => ['agrees', 'disagrees', 'passes'].includes(col));
   
@@ -230,6 +256,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   });
   
   // 提取群組名稱（如果存在群組信息）
+  // Extract group names (if group information exists)
   const groupNames: string[] = [];
   if (hasGroupInfo) {
     const uniqueGroups = new Set(voteColumns.map(col => col.split('-')[0]));
@@ -238,6 +265,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   }
   
   // 調試：檢查每個欄位的類型
+  // Debug: Check each column type
   console.log('Column type analysis:');
   voteColumns.forEach(col => {
     const isGroup = col.includes('-agree-count');
@@ -246,6 +274,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
   });
   
   // 如果只有簡單投票欄位，確保 hasGroupInfo 為 false
+  // If only simple voting columns exist, ensure hasGroupInfo is false
   if (!hasGroupInfo && hasSimpleVotes) {
     console.log('Only simple vote columns found, setting hasGroupInfo to false');
   }
@@ -264,9 +293,11 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
     };
 
     // 處理投票信息
+    // Process voting information
     if (voteColumns.length > 0) {
       try {
         // 優先檢查簡單投票格式: agrees, disagrees, passes
+        // Prioritize checking simple voting format: agrees, disagrees, passes
         if (hasSimpleVotes) {
           const agreesIndex = headers.findIndex(h => h === 'agrees');
           const disagreesIndex = headers.findIndex(h => h === 'disagrees');
@@ -285,6 +316,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
             } catch (error) {
               console.error('Error creating simple VoteTally:', error);
               // 如果 VoteTally 創建失敗，使用普通對象
+              // If VoteTally creation fails, use plain object
               comment.voteInfo = {
                 agreeCount: agrees,
                 disagreeCount: disagrees,
@@ -301,6 +333,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
           }
         } else if (hasGroupInfo && groupNames.length > 0) {
           // 群組投票格式: {group name}-agree-count, {group name}-disagree-count, {group name}-pass-count
+          // Group voting format: {group name}-agree-count, {group name}-disagree-count, {group name}-pass-count
           const voteInfo: { [key: string]: VoteTally } = {};
           
           groupNames.forEach(group => {
@@ -321,6 +354,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
               } catch (error) {
                 console.error(`Error creating VoteTally for group ${group}:`, error);
                 // 如果 VoteTally 創建失敗，使用普通對象
+                // If VoteTally creation fails, use plain object
                 voteInfo[group] = {
                   agreeCount,
                   disagreeCount,
@@ -347,18 +381,21 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
     }
 
          // 處理主題信息（如果存在）- 存儲在 metadata 中
+         // Process topic information (if exists) - stored in metadata
      const topicsIndex = headers.findIndex(h => h === 'topics');
      const topicIndex = headers.findIndex(h => h === 'topic');
      const subtopicIndex = headers.findIndex(h => h === 'subtopic');
      
      if (topicsIndex !== -1 && row[headers[topicsIndex]]) {
        // 解析主題字符串並存儲在 metadata 中
+       // Parse topic string and store in metadata
        const topics = parseTopicsString(row[headers[topicsIndex]]);
        if (topics.length > 0) {
          comment.metadata = { ...comment.metadata, topics };
        }
      } else if (topicIndex !== -1 && row[headers[topicIndex]]) {
        // 單個主題和子主題
+       // Single topic and subtopic
        const topic = {
          name: row[headers[topicIndex]],
          subtopics: subtopicIndex !== -1 && row[headers[subtopicIndex]] ? 
@@ -377,6 +414,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
 
 /**
  * 從 CSV 行獲取投票信息
+ * Get voting information from CSV row
  */
 export function getVoteInfoFromCsvRow(
 	row: CommentCsvRow,
@@ -385,6 +423,7 @@ export function getVoteInfoFromCsvRow(
 ): any {
 	if (usesGroups) {
 		// 分組投票格式
+		// Grouped voting format
 		const voteInfo: { [key: string]: VoteTally } = {};
 		for (const groupName of groupNames) {
 			voteInfo[groupName] = new VoteTally(
@@ -396,6 +435,7 @@ export function getVoteInfoFromCsvRow(
 		return voteInfo;
 	} else {
 		// 簡單投票格式
+		// Simple voting format
 		return new VoteTally(
 			Number(row.agrees || 0), 
 			Number(row.disagrees || 0), 
@@ -406,7 +446,9 @@ export function getVoteInfoFromCsvRow(
 
 /**
  * 解析主題字符串，支持嵌套主題格式
+ * Parse topic string, supporting nested topic format
  * 例如: "Education,Technology" 或 "Education:Math,Science:Physics"
+ * For example: "Education,Technology" or "Education:Math,Science:Physics"
  */
 export function parseTopicsString(topicsString: string): Topic[] {
 	if (!topicsString || topicsString.trim() === '') {
@@ -414,13 +456,15 @@ export function parseTopicsString(topicsString: string): Topic[] {
 	}
 
 	// 移除引號
+	// Remove quotes
 	const cleanString = topicsString.replace(/^["']|["']$/g, '');
 	
 	// 分割主題（支持逗號分隔）
+	// Split topics (supports comma separation)
 	const topicParts = cleanString.split(',').map(t => t.trim()).filter(t => t);
 	
 	return topicParts.map(topicName => ({
-		id: topicName.toLowerCase().replace(/\s+/g, '-'), // 生成 ID
+		id: topicName.toLowerCase().replace(/\s+/g, '-'), // 生成 ID / Generate ID
 		name: topicName,
 		subtopics: []
 	}));
