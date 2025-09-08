@@ -1,19 +1,23 @@
 /// <reference path="../worker-configuration.d.ts" />
-import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
+import type { ExportedHandler, ExecutionContext, Queue, MessageBatch } from '@cloudflare/workers-types';
 import { Sensemaker, OpenRouterModel, SummarizationType, VoteTally } from 'sensemaking-tools';
 import type { Comment, Topic } from 'sensemaking-tools';
 import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_utils';
 import { parseJSONFile } from './utils/parseJSON';
 
 /**
- * Sensemaker Backend API
+ * Sensemaker Backend API with Queue Support
  * 
  * 支持的路由:
  * - GET /api/test: 健康檢查
- * - POST /api/sensemake: 智能分析評論數據（異步處理，結果存儲到 R2）
+ * - POST /api/sensemake: 智能分析評論數據（使用 Queue 異步處理）
  * - GET /api/sensemake/result/:taskId: 獲取處理結果
  * - POST /api/test-llm: 簡單的 LLM 測試
  * - POST /api/test-csv: CSV 解析測試
+ * 
+ * Queue Consumer:
+ * - 處理 sensemake 任務，不受前端連線影響
+ * - 支援自動重試和錯誤處理
  * 
  * 使用方法:
  * - 本地開發: npm run dev
@@ -26,6 +30,112 @@ interface Env {
 	OPENROUTER_MODEL: string;
 	IS_DEVELOPMENT?: string;
 	SENSEMAKER_RESULTS: R2Bucket;
+	SENSEMAKER_QUEUE: Queue;
+}
+
+// Queue 任務介面
+interface SensemakeTask {
+	taskId: string;
+	comments: Comment[];
+	openRouterApiKey: string;
+	openRouterModel: string;
+	additionalContext: string | null;
+	outputLang: string;
+	createdAt: string;
+}
+
+// 將各種格式的 voteInfo 轉為帶有 getTotalCount 的 VoteTally 相容物件
+function toVoteTally(v: any): any {
+  if (!v) return undefined;
+  if (typeof v.getTotalCount === 'function') return v;
+  const agree = v.agreeCount ?? v.agrees ?? v.agree ?? 0;
+  const disagree = v.disagreeCount ?? v.disagrees ?? v.disagree ?? 0;
+  const pass = v.passCount ?? v.passes ?? v.pass ?? 0;
+  try {
+    // 優先用套件的 VoteTally 類別
+    return new (VoteTally as any)(agree, disagree, pass);
+  } catch {
+    // 後備：提供同名方法，避免下游呼叫失敗
+    return {
+      agreeCount: agree,
+      disagreeCount: disagree,
+      passCount: pass,
+      getTotalCount: (includePass: boolean = true) => agree + disagree + (includePass ? pass : 0),
+    };
+  }
+}
+
+// 為 Queue 序列化準備的版本，只包含數值，不包含函數
+function toVoteTallyForQueue(v: any): any {
+  if (!v) return undefined;
+  const agree = v.agreeCount ?? v.agrees ?? v.agree ?? 0;
+  const disagree = v.disagreeCount ?? v.disagrees ?? v.disagree ?? 0;
+  const pass = v.passCount ?? v.passes ?? v.pass ?? 0;
+  
+  return {
+    agreeCount: agree,
+    disagreeCount: disagree,
+    passCount: pass,
+    // 不包含函數，只包含數值
+  };
+}
+
+function normalizeCommentsVoteInfo(comments: Comment[]): Comment[] {
+  return comments.map((c: any) => {
+    if (!c?.voteInfo) return c;
+    
+    // 創建新的物件，避免修改原始物件
+    const newComment = { ...c };
+    const vi = c.voteInfo;
+    
+    if (typeof vi === 'object' && vi !== null) {
+      if (typeof vi.getTotalCount === 'function' || vi.constructor?.name === 'VoteTally') {
+        return newComment; // 已是可用的 VoteTally
+      }
+      
+      // 可能是群組 { groupA: {...}, groupB: {...} } 或單一 tally 物件
+      const isGroup = Object.values(vi).every((x: any) => typeof x === 'object');
+      if (isGroup) {
+        newComment.voteInfo = Object.fromEntries(
+          Object.entries(vi).map(([k, val]: any) => [k, toVoteTally(val)])
+        );
+      } else {
+        newComment.voteInfo = toVoteTally(vi);
+      }
+    }
+    
+    return newComment;
+  });
+}
+
+// 為 Queue 序列化準備的版本，移除所有函數
+function normalizeCommentsForQueue(comments: Comment[]): Comment[] {
+  return comments.map((c: any) => {
+    if (!c?.voteInfo) return c;
+    
+    // 創建新的物件，避免修改原始物件
+    const newComment = { ...c };
+    const vi = c.voteInfo;
+    
+    if (typeof vi === 'object' && vi !== null) {
+      if (typeof vi.getTotalCount === 'function' || vi.constructor?.name === 'VoteTally') {
+        // 如果是 VoteTally 物件，轉換為純數值物件
+        newComment.voteInfo = toVoteTallyForQueue(vi);
+      } else {
+        // 可能是群組 { groupA: {...}, groupB: {...} } 或單一 tally 物件
+        const isGroup = Object.values(vi).every((x: any) => typeof x === 'object');
+        if (isGroup) {
+          newComment.voteInfo = Object.fromEntries(
+            Object.entries(vi).map(([k, val]: any) => [k, toVoteTallyForQueue(val)])
+          );
+        } else {
+          newComment.voteInfo = toVoteTallyForQueue(vi);
+        }
+      }
+    }
+    
+    return newComment;
+  });
 }
 
 const ALLOWED_ORIGINS = [
@@ -38,9 +148,6 @@ const ALLOWED_ORIGINS = [
 ];
 
 // 開發環境的寬鬆 CORS 設置
-// 可以根據環境變數設置，預設為 true
-
-// 檢查來源是否被允許
 function isOriginAllowed(origin: string, isDevelopment: boolean) {
 	// 開發環境：允許所有 localhost 來源
 	if (isDevelopment && origin.includes('localhost')) {
@@ -62,7 +169,7 @@ function getCorsHeaders(origin: string, isDevelopment: boolean) {
 			'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 			'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 			'Access-Control-Max-Age': '86400', // 24 hours
-			'Vary': 'Origin', // 重要：告訴快取這個回應會根據 Origin 而變化
+			'Vary': 'Origin',
 		};
 	}
 	
@@ -72,35 +179,30 @@ function getCorsHeaders(origin: string, isDevelopment: boolean) {
 		'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
 		'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 		'Access-Control-Max-Age': '86400', // 24 hours
-		'Vary': 'Origin', // 重要：告訴快取這個回應會根據 Origin 而變化
+		'Vary': 'Origin',
 	};
 }
 
 export default {
+	// HTTP 請求處理
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
 		const origin = request.headers.get('Origin');
 
-		// 調試 CORS 信息
 		console.log('Request Origin:', origin);
 		console.log('Request Method:', request.method);
 		console.log('Request Path:', path);
 
-		// 檢查是否為開發環境
 		const isDevelopment = env.IS_DEVELOPMENT === 'true' || env.IS_DEVELOPMENT === undefined;
-		
 		const corsHeaders = getCorsHeaders(origin || '', isDevelopment);
-		console.log('CORS Headers:', corsHeaders);
 
 		try {
 			// 處理 CORS 預檢請求
 			if (request.method === 'OPTIONS') {
 				return new Response(null, {
 					status: 200,
-					headers: {
-						...corsHeaders,
-					}
+					headers: { ...corsHeaders }
 				});
 			}
 
@@ -109,7 +211,7 @@ export default {
 				return new Response(
 					JSON.stringify({
 						status: 'ok',
-						message: 'Sensemaker Backend is running',
+						message: 'Sensemaker Backend with Queue is running',
 						timestamp: new Date().toISOString(),
 						environment: isDevelopment ? 'development' : 'production'
 					}),
@@ -135,104 +237,12 @@ export default {
 
 			// 簡單的 LLM 測試端點
 			if (path === '/api/test-llm' && request.method === 'POST') {
-				console.log('=== TESTING LLM INTEGRATION ===');
-				
-				// 創建一個簡單的測試評論
-				const testComment = {
-					id: 'test-1',
-					text: '這是一個測試評論，用來驗證 LLM 是否正常工作。'
-				};
-				
-				console.log('Test comment:', testComment);
-				
-				// 創建 OpenRouter 模型實例
-				const model = new (OpenRouterModel as any)(
-					env.OPENROUTER_API_KEY, 
-					env.OPENROUTER_MODEL, 
-					env.OPENROUTER_BASE_URL
-				);
-				
-				console.log('Model created with:', {
-					apiKey: env.OPENROUTER_API_KEY ? '***' + env.OPENROUTER_API_KEY.slice(-4) : 'undefined',
-					model: env.OPENROUTER_MODEL,
-					baseURL: env.OPENROUTER_BASE_URL
-				});
-				
-				try {
-					// 測試簡單的文本生成
-					console.log('Testing simple text generation...');
-					const simpleResponse = await model.generateText(
-						'請用繁體中文回答：這是一個測試，請回覆"測試成功"',
-						'zh-TW'
-					);
-					console.log('Simple text response:', simpleResponse);
-					
-					// 測試結構化數據生成
-					console.log('Testing structured data generation...');
-					let structuredResponse = null;
-					let structuredError = null;
-					
-					try {
-						structuredResponse = await model.generateData(
-							'請分析這個評論的情感傾向，並用JSON格式回覆：{"sentiment": "positive/negative/neutral", "confidence": 0.9}',
-							{
-								type: 'object',
-								properties: {
-									sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] },
-									confidence: { type: 'number', minimum: 0, maximum: 1 }
-								},
-								required: ['sentiment', 'confidence']
-							},
-							'zh-TW'
-						);
-						console.log('Structured response:', structuredResponse);
-					} catch (error) {
-						console.error('Structured data generation failed:', error);
-						structuredError = error instanceof Error ? error.message : String(error);
-					}
-					
-					return new Response(
-						JSON.stringify({
-							success: true,
-							message: 'LLM test completed',
-							testComment: testComment,
-							simpleResponse: simpleResponse,
-							structuredResponse: structuredResponse,
-							structuredError: structuredError,
-							timestamp: new Date().toISOString()
-						}, null, 2),
-						{
-							status: 200,
-							headers: {
-								'Content-Type': 'application/json',
-								...corsHeaders
-							}
-						}
-					);
-					
-				} catch (error) {
-					console.error('LLM test failed:', error);
-					return new Response(
-						JSON.stringify({
-							success: false,
-							message: 'LLM test failed',
-							error: error instanceof Error ? error.message : String(error),
-							timestamp: new Date().toISOString()
-						}, null, 2),
-						{
-							status: 500,
-							headers: {
-								'Content-Type': 'application/json',
-								...corsHeaders
-							}
-						}
-					);
-				}
+				return await handleTestLLMRequest(request, env, corsHeaders);
 			}
 
 			// Sensemake API 端點
 			if (path === '/api/sensemake' && request.method === 'POST') {
-				return await handleSensemakeRequest(request, url, env, corsHeaders, ctx);
+				return await handleSensemakeRequest(request, url, env, corsHeaders);
 			}
 
 			// CSV 解析測試端點
@@ -253,9 +263,7 @@ export default {
 			// 404 處理
 			return new Response('Not Found', { 
 				status: 404,
-				headers: {
-					...corsHeaders,
-				}
+				headers: { ...corsHeaders }
 			});
 
 		} catch (error) {
@@ -275,12 +283,55 @@ export default {
 			);
 		}
 	},
+
+	// Queue Consumer - 處理背景任務
+	async queue(batch: MessageBatch<SensemakeTask>, env: Env): Promise<void> {
+		console.log(`Processing ${batch.messages.length} queue messages`);
+		
+		for (const message of batch.messages) {
+			try {
+				const task = message.body;
+				console.log(`Processing queue task: ${task.taskId}`);
+				
+				// 更新任務狀態為處理中
+				await updateTaskStatus(env, task.taskId, 'processing', 1);
+				
+				// 處理任務，重新創建可用的 VoteTally 物件
+				await processSensemakeTask(
+					task.taskId,
+					normalizeCommentsVoteInfo(task.comments) as any,
+					task.openRouterApiKey,
+					task.openRouterModel,
+					task.additionalContext,
+					task.outputLang,
+					env
+				);
+				
+				// 標記消息為已處理
+				message.ack();
+				console.log(`Queue task ${task.taskId} completed successfully`);
+				
+			} catch (error) {
+				console.error(`Error processing queue task:`, error);
+				
+				// 更新任務狀態為失敗
+				try {
+					await updateTaskStatus(env, message.body.taskId, 'failed', 1);
+				} catch (statusError) {
+					console.error(`Failed to update task status:`, statusError);
+				}
+				
+				// 標記消息為失敗，讓 Queue 重試
+				message.retry();
+			}
+		}
+	}
 };
 
 /**
- * 處理 sensemake API 請求（異步處理，結果存儲到 R2）
+ * 處理 sensemake API 請求（使用 Queue 異步處理）
  */
-async function handleSensemakeRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>, ctx: ExecutionContext): Promise<Response> {
+async function handleSensemakeRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
 	
 	console.log('OPENROUTER_API_KEY', env.OPENROUTER_API_KEY);
 	console.log('OPENROUTER_MODEL', env.OPENROUTER_MODEL);
@@ -336,10 +387,8 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 		let comments: Comment[] = [];
 		
 		if (contentType === 'application/json' || fileName.endsWith('.json')) {
-			// 處理 JSON 文件
 			comments = await parseJSONFile(file);
 		} else if (contentType === 'text/csv' || fileName.endsWith('.csv')) {
-			// 處理 CSV 文件
 			comments = await parseCSVFile(file);
 		} else {
 			return new Response(
@@ -374,21 +423,40 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			);
 		}
 
+		// 為 Queue 序列化準備，移除所有函數，只保留數值
+		comments = normalizeCommentsForQueue(comments) as any;
+
 		// 生成唯一的任務 ID
 		const taskId = generateTaskId();
 		console.log(`Starting task ${taskId} with ${comments.length} comments`);
+
+		// 創建 Queue 任務
+		const queueTask: SensemakeTask = {
+			taskId,
+			comments,
+			openRouterApiKey,
+			openRouterModel,
+			additionalContext,
+			outputLang,
+			createdAt: new Date().toISOString()
+		};
+
+		// 將任務發送到 Queue
+		await env.SENSEMAKER_QUEUE.send(queueTask);
+		console.log(`Task ${taskId} queued successfully`);
 
 		// 立即返回任務 ID，讓前端開始輪詢
 		const response = new Response(
 			JSON.stringify({
 				success: true,
 				taskId: taskId,
-				message: 'Task started successfully',
+				message: 'Task queued successfully',
 				commentsCount: comments.length,
 				model: openRouterModel,
-				status: 'processing',
+				status: 'queued',
 				pollingUrl: `/api/sensemake/result/${taskId}`,
-				estimatedTime: '10~30 minutes'
+				estimatedTime: '10~30 minutes',
+				note: 'Task is now being processed in the background queue'
 			}),
 			{
 				status: 202, // Accepted
@@ -398,19 +466,6 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 				}
 			}
 		);
-
-		// 在背景中處理任務（不等待完成）
-		ctx.waitUntil(processSensemakeTask(
-			taskId,
-			comments,
-			openRouterApiKey,
-			openRouterModel,
-			additionalContext,
-			outputLang,
-			env
-		).catch(error => {
-			console.error(`Task ${taskId}: Unhandled error in waitUntil:`, error);
-		}));
 
 		return response;
 
@@ -433,7 +488,7 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 }
 
 /**
- * 在背景中處理 sensemake 任務
+ * 在背景中處理 sensemake 任務（Queue consumer 使用）
  */
 async function processSensemakeTask(
 	taskId: string,
@@ -446,10 +501,10 @@ async function processSensemakeTask(
 ): Promise<void> {
 	try {
 		console.log(`Task ${taskId}: Starting processing...`);
-		
+
 		// 創建 OpenRouter 模型實例
 		const model = new (OpenRouterModel as any)(openRouterApiKey, openRouterModel, env.OPENROUTER_BASE_URL);
-		
+
 		// 創建 Sensemaker 實例
 		const sensemaker = new Sensemaker({
 			defaultModel: model
@@ -457,29 +512,39 @@ async function processSensemakeTask(
 
 		// 學習主題
 		console.log(`Task ${taskId}: Learning topics...`);
-		const topics = await sensemaker.learnTopics(comments, true, undefined, additionalContext || undefined, 2, outputLang as any);
-		console.log(`Task ${taskId}: Topics learned:`, topics);
-		
+		const topics = await sensemaker.learnTopics(
+			comments,
+			true,
+			undefined,
+			additionalContext || undefined,
+			2,
+			outputLang as any
+		);
+
 		// 分類評論
 		console.log(`Task ${taskId}: Categorizing comments...`);
-		const categorizedComments = await sensemaker.categorizeComments(comments, true, topics, additionalContext || undefined, 2, outputLang as any);
-		console.log(`Task ${taskId}: Comments categorized, count:`, categorizedComments.length);
-		
+		const categorizedComments = await sensemaker.categorizeComments(
+			comments,
+			true,
+			topics,
+			additionalContext || undefined,
+			2,
+			outputLang as any
+		);
+
 		// 生成摘要
 		console.log(`Task ${taskId}: Generating summary...`);
 		const summary = await sensemaker.summarize(
-			categorizedComments, 
-			SummarizationType.AGGREGATE_VOTE, 
-			topics, 
-			additionalContext || undefined, 
+			categorizedComments,
+			SummarizationType.AGGREGATE_VOTE,
+			topics,
+			additionalContext || undefined,
 			outputLang as any
 		);
 
 		// 移除 TopicSummary 部分，只保留核心摘要內容
-		const filteredSummary = summary.withoutContents((sc) => sc.type === "TopicSummary");
-
-		// 獲取 markdown 格式的摘要
-		const markdownContent = filteredSummary.getText("MARKDOWN");
+		const filteredSummary = summary.withoutContents((sc: any) => sc.type === 'TopicSummary');
+		const markdownContent = filteredSummary.getText('MARKDOWN');
 
 		// 將結果存儲到 R2
 		const resultData = {
@@ -493,15 +558,11 @@ async function processSensemakeTask(
 			summary: markdownContent
 		};
 
-		// 存儲到 R2
-		const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
-		await bucket.put(
+		await env.SENSEMAKER_RESULTS.put(
 			`${taskId}.json`,
 			JSON.stringify(resultData, null, 2),
 			{
-				httpMetadata: {
-					contentType: 'application/json',
-				},
+				httpMetadata: { contentType: 'application/json' },
 				customMetadata: {
 					taskId: taskId,
 					status: 'completed',
@@ -514,7 +575,7 @@ async function processSensemakeTask(
 
 	} catch (error) {
 		console.error(`Task ${taskId}: Error during processing:`, error);
-		
+
 		// 存儲錯誤信息到 R2
 		const errorData = {
 			taskId: taskId,
@@ -525,14 +586,11 @@ async function processSensemakeTask(
 		};
 
 		try {
-			const bucket = env.IS_DEVELOPMENT === 'true' ? env.SENSEMAKER_RESULTS : env.SENSEMAKER_RESULTS;
-			await bucket.put(
+			await env.SENSEMAKER_RESULTS.put(
 				`${taskId}.json`,
 				JSON.stringify(errorData, null, 2),
 				{
-					httpMetadata: {
-						contentType: 'application/json',
-					},
+					httpMetadata: { contentType: 'application/json' },
 					customMetadata: {
 						taskId: taskId,
 						status: 'failed',
@@ -543,11 +601,91 @@ async function processSensemakeTask(
 		} catch (storageError) {
 			console.error(`Task ${taskId}: Failed to store error to R2:`, storageError);
 		}
-		
-		// 重新拋出錯誤，確保 Promise 正確 reject
+
 		throw error;
 	}
 }
+
+/**
+ * 簡單的 LLM 測試請求處理
+ */
+async function handleTestLLMRequest(request: Request, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
+  console.log('=== TESTING LLM INTEGRATION ===');
+
+  const testComment = { id: 'test-1', text: '這是一個測試評論，用來驗證 LLM 是否正常工作。' };
+  console.log('Test comment:', testComment);
+
+  const model = new (OpenRouterModel as any)(
+    env.OPENROUTER_API_KEY,
+    env.OPENROUTER_MODEL,
+    env.OPENROUTER_BASE_URL
+  );
+
+  console.log('Model created with:', {
+    apiKey: env.OPENROUTER_API_KEY ? '***' + env.OPENROUTER_API_KEY.slice(-4) : 'undefined',
+    model: env.OPENROUTER_MODEL,
+    baseURL: env.OPENROUTER_BASE_URL
+  });
+
+  try {
+    const simpleResponse = await model.generateText(
+      '請用繁體中文回答：這是一個測試，請回覆"測試成功"',
+      'zh-TW'
+    );
+
+    let structuredResponse: any = null;
+    let structuredError: string | null = null;
+    try {
+      structuredResponse = await model.generateData(
+        '請分析這個評論的情感傾向，並用JSON格式回覆：{"sentiment": "positive/negative/neutral", "confidence": 0.9}',
+        {
+          type: 'object',
+          properties: {
+            sentiment: { type: 'string', enum: ['positive', 'negative', 'neutral'] },
+            confidence: { type: 'number', minimum: 0, maximum: 1 }
+          },
+          required: ['sentiment', 'confidence']
+        },
+        'zh-TW'
+      );
+    } catch (error: any) {
+      structuredError = error instanceof Error ? error.message : String(error);
+    }
+
+    return new Response(
+      JSON.stringify(
+        {
+          success: true,
+          message: 'LLM test completed',
+          testComment,
+          simpleResponse,
+          structuredResponse,
+          structuredError,
+          timestamp: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      { status: 200, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  } catch (error: any) {
+    return new Response(
+      JSON.stringify(
+        {
+          success: false,
+          message: 'LLM test failed',
+          error: error instanceof Error ? error.message : String(error),
+          timestamp: new Date().toISOString()
+        },
+        null,
+        2
+      ),
+      { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+}
+
+
 
 /**
  * 處理獲取結果的請求
@@ -756,57 +894,6 @@ async function handleDeleteTaskRequest(request: Request, url: URL, env: Env, cor
 }
 
 /**
- * 將各種格式的 voteInfo 轉為帶有 getTotalCount 的 VoteTally 相容物件
- */
-function toVoteTally(v: any): any {
-  if (!v) return undefined;
-  if (typeof v.getTotalCount === 'function') return v;
-  const agree = v.agreeCount ?? v.agrees ?? v.agree ?? 0;
-  const disagree = v.disagreeCount ?? v.disagrees ?? v.disagree ?? 0;
-  const pass = v.passCount ?? v.passes ?? v.pass ?? 0;
-  try {
-    // 優先用套件的 VoteTally 類別
-    return new (VoteTally as any)(agree, disagree, pass);
-  } catch {
-    // 後備：提供同名方法，避免下游呼叫失敗
-    return {
-      agreeCount: agree,
-      disagreeCount: disagree,
-      passCount: pass,
-      getTotalCount: (includePass: boolean = true) => agree + disagree + (includePass ? pass : 0),
-    };
-  }
-}
-
-function normalizeCommentsVoteInfo(comments: Comment[]): Comment[] {
-  return comments.map((c: any) => {
-    if (!c?.voteInfo) return c;
-    
-    // 創建新的物件，避免修改原始物件
-    const newComment = { ...c };
-    const vi = c.voteInfo;
-    
-    if (typeof vi === 'object' && vi !== null) {
-      if (typeof vi.getTotalCount === 'function' || vi.constructor?.name === 'VoteTally') {
-        return newComment; // 已是可用的 VoteTally
-      }
-      
-      // 可能是群組 { groupA: {...}, groupB: {...} } 或單一 tally 物件
-      const isGroup = Object.values(vi).every((x: any) => typeof x === 'object');
-      if (isGroup) {
-        newComment.voteInfo = Object.fromEntries(
-          Object.entries(vi).map(([k, val]: any) => [k, toVoteTally(val)])
-        );
-      } else {
-        newComment.voteInfo = toVoteTally(vi);
-      }
-    }
-    
-    return newComment;
-  });
-}
-
-/**
  * 生成唯一的任務 ID
  */
 function generateTaskId(): string {
@@ -899,7 +986,6 @@ async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Re
 			
 			if (comment.voteInfo) {
 				// 檢查是否為群組投票格式（對象有多個鍵）還是簡單投票格式
-				const voteInfoKeys = Object.keys(comment.voteInfo);
 				const hasVoteCounts = 'agreeCount' in comment.voteInfo && 'disagreeCount' in comment.voteInfo && 'passCount' in comment.voteInfo;
 				
 				if (hasVoteCounts) {
@@ -1104,16 +1190,18 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 					id: comment.id,
 					text: comment.text,
 					voteInfo: comment.voteInfo ? (() => {
-						// 檢查是否為 VoteTally 物件（有 getTotalCount 方法）
-						if (typeof (comment.voteInfo as any).getTotalCount === 'function') {
-							// VoteTally 物件格式
+						// 檢查是否為群組投票格式還是簡單投票格式
+						const hasVoteCounts = 'agreeCount' in comment.voteInfo && 'disagreeCount' in comment.voteInfo && 'passCount' in comment.voteInfo;
+						
+						if (hasVoteCounts) {
+							// 簡單投票格式（包含 agreeCount, disagreeCount, passCount）
 							const voteData = comment.voteInfo as any;
 							return {
 								agreeCount: voteData.agreeCount,
 								disagreeCount: voteData.disagreeCount,
 								passCount: voteData.passCount,
-								totalCount: voteData.getTotalCount(true),
-								hasGetTotalCount: true,
+								totalCount: voteData.getTotalCount ? voteData.getTotalCount(true) : 'N/A',
+								hasGetTotalCount: !!voteData.getTotalCount,
 								getTotalCount: voteData.getTotalCount
 							};
 						} else {
@@ -1245,5 +1333,39 @@ async function handleTestR2Request(request: Request, env: Env, corsHeaders: Reco
 				} 
 			}
 		);
+	}
+}
+
+/**
+ * 更新任務狀態到 R2
+ */
+async function updateTaskStatus(env: Env, taskId: string, status: string, attempt: number, progress?: string): Promise<void> {
+	try {
+		const statusData = {
+			taskId: taskId,
+			status: status,
+			lastUpdated: new Date().toISOString(),
+			attempt: attempt,
+			progress: progress || 'unknown'
+		};
+
+		const bucket = env.SENSEMAKER_RESULTS;
+		await bucket.put(
+			`${taskId}-status.json`,
+			JSON.stringify(statusData, null, 2),
+			{
+				httpMetadata: {
+					contentType: 'application/json',
+				},
+				customMetadata: {
+					taskId: taskId,
+					status: status,
+					lastUpdated: statusData.lastUpdated
+				}
+			}
+		);
+	} catch (error) {
+		console.error(`Task ${taskId}: Failed to update status:`, error);
+		// 不拋出錯誤，避免影響主要任務
 	}
 }
