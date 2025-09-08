@@ -108,6 +108,16 @@ export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
   console.log('Detecting CSV format...');
   console.log('Headers:', headers);
   
+  // 優先檢查是否為完整格式（包含所有必要欄位）
+  // Prioritize checking if it's complete format (contains all required columns)
+  const completeRequiredColumns = ['comment-id', 'comment_text', 'agrees', 'disagrees', 'passes'];
+  const hasCompleteColumns = completeRequiredColumns.every(col => headers.includes(col));
+  
+  if (hasCompleteColumns) {
+    console.log('Detected complete format');
+    return 'complete';
+  }
+  
   // 檢查是否為 pol.is 格式（必須包含這些欄位）
   // Check if it's pol.is format (must contain these columns)
   const polIsRequiredColumns = ['comment-id', 'agrees', 'disagrees', 'comment-body'];
@@ -116,16 +126,6 @@ export function detectCSVFormat(headers: string[], rows: CSVRow[]): CSVFormat {
   if (hasPolIsColumns) {
     console.log('Detected pol.is format');
     return 'pol.is';
-  }
-  
-  // 檢查是否為完整格式（包含所有必要欄位）
-  // Check if it's complete format (contains all required columns)
-  const completeRequiredColumns = ['comment-id', 'comment_text', 'agrees', 'disagrees', 'passes'];
-  const hasCompleteColumns = completeRequiredColumns.every(col => headers.includes(col));
-  
-  if (hasCompleteColumns) {
-    console.log('Detected complete format');
-    return 'complete';
   }
   
   // 檢查是否有 comment-body 欄位（可能是其他 pol.is 變體）
@@ -372,7 +372,7 @@ function convertToComments(headers: string[], rows: CSVRow[]): Comment[] {
           });
           
           if (Object.keys(voteInfo).length > 0) {
-            comment.voteInfo = voteInfo;g
+            comment.voteInfo = voteInfo;
           }
         }
       } catch (error) {
