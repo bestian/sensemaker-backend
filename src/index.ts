@@ -368,7 +368,7 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			return new Response(
 				JSON.stringify({ 
 					error: 'Missing File', 
-					message: 'File upload is required' 
+					message: 'File upload is required. Supported formats: JSON, CSV, TXT (including URLs)' 
 				}), 
 				{ 
 					status: 400, 
@@ -385,16 +385,105 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 		const fileName = file.name.toLowerCase();
 		
 		let comments: Comment[] = [];
+		let file_final: File = file;
+
+		// 如果上傳的是 txt 文件且內容是單一資料網址，則需要先下載該網址的資料
+		if (contentType === 'text/plain' || fileName.endsWith('.txt')) {
+			console.log('Detected txt file, checking if content is a URL...');
+			const fileContent = await file.text();
+			const trimmedContent = fileContent.trim();
+			
+			// 檢查是否為 URL（簡單的 URL 格式檢查）
+			if (trimmedContent.startsWith('http://') || trimmedContent.startsWith('https://')) {
+				console.log(`Detected URL: ${trimmedContent}`);
+				console.log('Fetching data from URL...');
+				
+				try {
+					const response = await fetch(trimmedContent);
+					if (!response.ok) {
+						throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+					}
+					
+					const urlContent = await response.text();
+					console.log(`Successfully fetched ${urlContent.length} characters from URL`);
+					
+					// 創建新的 File 物件，使用原始檔名但內容是從 URL 下載的
+					file_final = new File([urlContent], fileName, { type: 'text/plain' });
+					console.log('Created new file object from URL content');
+				} catch (error) {
+					console.error('Failed to fetch data from URL:', error);
+					return new Response(
+						JSON.stringify({ 
+							error: 'URL Fetch Failed', 
+							message: `無法從網址獲取資料: ${error instanceof Error ? error.message : 'Unknown error'}`,
+							url: trimmedContent
+						}), 
+						{ 
+							status: 400, 
+							headers: { 
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							} 
+						}
+					);
+				}
+			} else {
+				console.log('Txt file content is not a URL, processing as regular text file');
+			}
+		}
 		
-		if (contentType === 'application/json' || fileName.endsWith('.json')) {
-			comments = await parseJSONFile(file);
-		} else if (contentType === 'text/csv' || fileName.endsWith('.csv')) {
-			comments = await parseCSVFile(file);
+		// 使用 file_final 進行後續處理
+		const finalContentType = file_final.type;
+		const finalFileName = file_final.name.toLowerCase();
+		
+		if (finalContentType === 'application/json' || finalFileName.endsWith('.json')) {
+			console.log('Parsing JSON file...');
+			comments = await parseJSONFile(file_final);
+		} else if (finalContentType === 'text/csv' || finalFileName.endsWith('.csv')) {
+			console.log('Parsing CSV file...');
+			comments = await parseCSVFile(file_final);
+		} else if (finalContentType === 'text/plain' || finalFileName.endsWith('.txt')) {
+			// 嘗試解析為 JSON 或 CSV
+			console.log('Attempting to parse txt file as JSON or CSV...');
+			const textContent = await file_final.text();
+			
+			try {
+				// 先嘗試解析為 JSON
+				const jsonData = JSON.parse(textContent);
+				console.log('Successfully parsed as JSON');
+				comments = await parseJSONFile(file_final);
+			} catch (jsonError) {
+				console.log('Not valid JSON, trying CSV format...');
+				try {
+					// 嘗試解析為 CSV
+					comments = await parseCSVFile(file_final);
+					console.log('Successfully parsed as CSV');
+				} catch (csvError) {
+					console.error('Failed to parse as both JSON and CSV:', { jsonError, csvError });
+					return new Response(
+						JSON.stringify({ 
+							error: 'Unsupported File Format', 
+							message: '文件內容無法解析為 JSON 或 CSV 格式',
+							details: {
+								jsonError: jsonError instanceof Error ? jsonError.message : 'Unknown JSON error',
+								csvError: csvError instanceof Error ? csvError.message : 'Unknown CSV error'
+							}
+						}), 
+						{ 
+							status: 400, 
+							headers: { 
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							} 
+						}
+					);
+				}
+			}
 		} else {
 			return new Response(
 				JSON.stringify({ 
 					error: 'Unsupported File Type', 
-					message: 'Only JSON and CSV files are supported' 
+					message: 'Only JSON, CSV, and TXT files are supported' 
 				}), 
 				{ 
 					status: 400, 
@@ -929,12 +1018,59 @@ async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Re
 			);
 		}
 
+		let file_final: File = file;
+
+		// 如果上傳的是 txt 文件且內容是單一資料網址，則需要先下載該網址的資料
+		if (file.name.endsWith('.txt')) {
+			console.log('Detected txt file, checking if content is a URL...');
+			const fileContent = await file.text();
+			const trimmedContent = fileContent.trim();
+			
+			// 檢查是否為 URL（簡單的 URL 格式檢查）
+			if (trimmedContent.startsWith('http://') || trimmedContent.startsWith('https://')) {
+				console.log(`Detected URL: ${trimmedContent}`);
+				console.log('Fetching data from URL...');
+				
+				try {
+					const response = await fetch(trimmedContent);
+					if (!response.ok) {
+						throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+					}
+					
+					const urlContent = await response.text();
+					console.log(`Successfully fetched ${urlContent.length} characters from URL`);
+					
+					// 創建新的 File 物件，使用原始檔名但內容是從 URL 下載的
+					file_final = new File([urlContent], file.name, { type: 'text/plain' });
+					console.log('Created new file object from URL content');
+				} catch (error) {
+					console.error('Failed to fetch data from URL:', error);
+					return new Response(
+						JSON.stringify({ 
+							error: 'URL Fetch Failed', 
+							message: `無法從網址獲取資料: ${error instanceof Error ? error.message : 'Unknown error'}`,
+							url: trimmedContent
+						}), 
+						{ 
+							status: 400, 
+							headers: { 
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							} 
+						}
+					);
+				}
+			} else {
+				console.log('Txt file content is not a URL, processing as regular text file');
+			}
+		}
+
 		// 檢查文件類型
-		if (!file.name.endsWith('.json')) {
+		if (!file_final.name.endsWith('.json') && !file_final.name.endsWith('.txt')) {
 			return new Response(
 				JSON.stringify({ 
 					error: 'Invalid File Type', 
-					message: 'Only JSON files are supported for this test endpoint' 
+					message: 'Only JSON and TXT files are supported for this test endpoint' 
 				}), 
 				{ 
 					status: 400, 
@@ -947,11 +1083,11 @@ async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Re
 		}
 
 		console.log('=== JSON 解析測試開始 ===');
-		console.log('文件名:', file.name);
-		console.log('文件大小:', file.size, 'bytes');
+		console.log('文件名:', file_final.name);
+		console.log('文件大小:', file_final.size, 'bytes');
 
 		// 解析 JSON 文件
-		const comments = await parseJSONFile(file);
+		const comments = await parseJSONFile(file_final);
 		
 		// 標準化 voteInfo，確保具備可用的 VoteTally 物件
 		const normalizedComments = normalizeCommentsVoteInfo(comments);
@@ -1019,8 +1155,8 @@ async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Re
 		return new Response(
 			JSON.stringify({
 				success: true,
-				fileName: file.name,
-				fileSize: file.size,
+				fileName: file_final.name,
+				fileSize: file_final.size,
 				commentsCount: normalizedComments.length,
 				comments: normalizedComments.map(comment => ({
 					id: comment.id,
@@ -1113,12 +1249,59 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 			);
 		}
 
+		let file_final: File = file;
+
+		// 如果上傳的是 txt 文件且內容是單一資料網址，則需要先下載該網址的資料
+		if (file.name.endsWith('.txt')) {
+			console.log('Detected txt file, checking if content is a URL...');
+			const fileContent = await file.text();
+			const trimmedContent = fileContent.trim();
+			
+			// 檢查是否為 URL（簡單的 URL 格式檢查）
+			if (trimmedContent.startsWith('http://') || trimmedContent.startsWith('https://')) {
+				console.log(`Detected URL: ${trimmedContent}`);
+				console.log('Fetching data from URL...');
+				
+				try {
+					const response = await fetch(trimmedContent);
+					if (!response.ok) {
+						throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+					}
+					
+					const urlContent = await response.text();
+					console.log(`Successfully fetched ${urlContent.length} characters from URL`);
+					
+					// 創建新的 File 物件，使用原始檔名但內容是從 URL 下載的
+					file_final = new File([urlContent], file.name, { type: 'text/plain' });
+					console.log('Created new file object from URL content');
+				} catch (error) {
+					console.error('Failed to fetch data from URL:', error);
+					return new Response(
+						JSON.stringify({ 
+							error: 'URL Fetch Failed', 
+							message: `無法從網址獲取資料: ${error instanceof Error ? error.message : 'Unknown error'}`,
+							url: trimmedContent
+						}), 
+						{ 
+							status: 400, 
+							headers: { 
+								'Content-Type': 'application/json',
+								...corsHeaders,
+							} 
+						}
+					);
+				}
+			} else {
+				console.log('Txt file content is not a URL, processing as regular text file');
+			}
+		}
+
 		// 檢查文件類型
-		if (!file.name.endsWith('.csv')) {
+		if (!file_final.name.endsWith('.csv') && !file_final.name.endsWith('.txt')) {
 			return new Response(
 				JSON.stringify({ 
 					error: 'Invalid File Type', 
-					message: 'Only CSV files are supported for this test endpoint' 
+					message: 'Only CSV and TXT files are supported for this test endpoint' 
 				}), 
 				{ 
 					status: 400, 
@@ -1131,11 +1314,11 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 		}
 
 		console.log('=== CSV 解析測試開始 ===');
-		console.log('文件名:', file.name);
-		console.log('文件大小:', file.size, 'bytes');
+		console.log('文件名:', file_final.name);
+		console.log('文件大小:', file_final.size, 'bytes');
 
 		// 解析 CSV 文件
-		const comments = await parseCSVFile(file);
+		const comments = await parseCSVFile(file_final);
 		
 		console.log('=== CSV 解析結果 ===');
 		console.log('解析的評論數量:', comments.length);
@@ -1183,8 +1366,8 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 		return new Response(
 			JSON.stringify({
 				success: true,
-				fileName: file.name,
-				fileSize: file.size,
+				fileName: file_final.name,
+				fileSize: file_final.size,
 				commentsCount: comments.length,
 				comments: comments.map(comment => ({
 					id: comment.id,

@@ -65,6 +65,11 @@ comment-id,agrees,disagrees,comment-body,moderated
 2,7,0,"我認為，台灣的自學審議機制是合理並可以信任的。",1
 ```
 
+3. **URL 格式** (`files/report_url.txt`):
+```txt
+https://pol.is/api/v3/reportExport/r3nhe9auvzhr36dwaytsk/comments.csv
+```
+
 **新功能特點：**
 
 1. **自動格式偵測**：
@@ -72,12 +77,18 @@ comment-id,agrees,disagrees,comment-body,moderated
    - 偵測完整格式：包含 `comment-id`, `comment_text`, `agrees`, `disagrees`, `passes` 欄位
    - 未知格式：嘗試基本解析
 
-2. **pol.is 格式轉換**：
+2. **URL 下載功能**：
+   - 支援上傳包含 URL 的 TXT 檔案
+   - 自動偵測 URL 格式（http:// 或 https://）
+   - 從 URL 下載資料並進行後續解析
+   - 支援 JSON、CSV 等格式的遠端檔案
+
+3. **pol.is 格式轉換**：
    - 自動將 `comment-body` 重命名為 `comment_text`
    - 根據 `moderated` 欄位計算 `passes` 值
    - 計算 `votes = agrees + disagrees + passes`
 
-3. **群組投票支援**：
+4. **群組投票支援**：
    - 支援 `{group}-agree-count`, `{group}-disagree-count`, `{group}-pass-count` 格式
    - 自動偵測群組名稱並創建群組投票物件
 
@@ -125,6 +136,7 @@ comment-id,agrees,disagrees,comment-body,moderated
    # 確保測試檔案存在
    ls -la files/comments.csv
    ls -la files/polis_test.csv
+   ls -la files/report_url.txt
    ```
 
 2. **測試完整格式**：
@@ -139,11 +151,23 @@ comment-id,agrees,disagrees,comment-body,moderated
      -F "file=@files/polis_test.csv" | jq
    ```
 
-4. **檢查轉換結果**：
+4. **測試 URL 功能（新功能）**：
+   ```bash
+   # 測試從 URL 下載並解析 CSV 檔案
+   curl -X POST http://localhost:8787/api/test-csv \
+     -F "file=@files/report_url.txt" | jq
+   
+   # 遠端測試
+   curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-csv \
+     -F "file=@files/report_url.txt" | jq
+   ```
+
+5. **檢查轉換結果**：
    - 確認 `comment-body` 是否正確轉換為 `comment_text`
    - 確認 `passes` 欄位是否正確計算
    - 確認 `votes` 欄位是否正確計算
    - 確認 `voteInfo` 物件是否包含 `getTotalCount` 方法
+   - 確認 URL 下載功能是否正常工作
 
 **自動化測試腳本：**
 
@@ -159,7 +183,8 @@ comment-id,agrees,disagrees,comment-body,moderated
 2. 檢查本地伺服器是否運行
 3. 測試完整格式 CSV 解析
 4. 測試 pol.is 格式 CSV 解析
-5. 驗證轉換結果
+5. 測試 URL 下載功能
+6. 驗證轉換結果
 
 **除錯技巧：**
 
@@ -172,6 +197,11 @@ comment-id,agrees,disagrees,comment-body,moderated
 2. **檢查格式偵測**：
    - 日誌中會顯示 "Detected pol.is format" 或 "Detected complete format"
    - 確認格式偵測是否正確
+
+3. **檢查 URL 下載**：
+   - 日誌中會顯示 "Detected URL" 和 "Fetching data from URL..."
+   - 確認 URL 下載是否成功
+   - 檢查下載的內容長度和格式
 
 **總結：**
 
@@ -186,6 +216,7 @@ comment-id,agrees,disagrees,comment-body,moderated
    - 自動偵測 pol.is 格式並進行轉換
    - 支援完整格式的直接解析
    - 支援群組投票格式
+   - 支援從 URL 下載並解析遠端檔案
 
 3. **向後相容**：
    - 保持原有的 API 介面不變
@@ -228,6 +259,10 @@ curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-json \
 # 測試 Polis.tw 格式的 JSON
 curl -X POST https://sensemaker-backend.bestian123.workers.dev/api/test-json \
   -F "file=@files/polis_report.json"
+
+# 測試 URL 功能（新功能）
+curl -X POST http://localhost:8787/api/test-json \
+  -F "file=@files/report_url.txt"
 
 # 本地開發環境測試
 curl -X POST http://localhost:8787/api/test-json \
