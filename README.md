@@ -12,17 +12,26 @@ Sensemaker Backend 是一個基於 Cloudflare Workers 的後端服務，集成�
 
 #### API 端點
 
-- **GET /** - 健康檢查端點
-- **POST /api/sensemake** - 智能分析評論數據
+- **GET /** - 返回測試頁面 (index.html)
+- **GET /api/test** - 健康檢查端點
+- **POST /api/sensemake** - 智能分析評論數據（使用 Queue 異步處理）
   - 查詢參數：
     - `OPENROUTER_API_KEY` (必需): OpenRouter API 金鑰
     - `OPENROUTER_MODEL` (可選): 模型名稱，預設為 `openai/gpt-oss-20b:free`
     - `additionalContext` 或 `a` (可選): 對話的額外上下文描述
     - `output_lang` (可選): 輸出語言，支持 `en` 和 `zh-TW`，預設為 `en`
-  - 請求體：FormData 格式，包含 `file` 字段（JSON 或 CSV 文件）
+  - 請求體：FormData 格式，包含 `file` 字段（JSON、CSV 或 TXT 文件）
   - 支持的文件格式：
     - JSON: 評論數組或包含 comments 字段的對象
     - CSV: 包含 comment-id、comment_text 和投票數據的表格
+    - TXT: 連到正確格式的JSON或CSV的單一 URL
+  - 返回：任務 ID 和輪詢 URL，前端需要輪詢獲取結果
+- **GET /api/sensemake/result/:taskId** - 獲取處理結果
+- **DELETE /api/sensemake/delete/:taskId** - 刪除任務報告
+- **POST /api/test-llm** - 測試 LLM 連接和功能
+- **POST /api/test-csv** - 測試 CSV 文件解析
+- **POST /api/test-json** - 測試 JSON 文件解析
+- **POST /api/test-r2** - 測試 R2 存儲讀寫功能
 
 ### 技術棧
 
@@ -31,6 +40,7 @@ Sensemaker Backend 是一個基於 Cloudflare Workers 的後端服務，集成�
 - **構建工具**: Wrangler
 - **測試框架**: Vitest
 - **依賴**: sensemaking-tools
+- **異步處理**: Cloudflare Queue
 
 ### 系統要求
 
@@ -123,29 +133,70 @@ npm test
 
 ### 使用示例
 
-#### 1. 健康檢查
+#### 1. 訪問測試頁面
+```bash
+# 在瀏覽器中訪問
+https://sensemaker-backend.bestian123.workers.dev/
+```
+
+#### 2. 健康檢查
 ```bash
 curl http://localhost:8787/api/test
 ```
 
-#### 2. 分析評論數據
+#### 3. 分析評論數據（異步處理）
 ```bash
-# 使用 curl 發送請求
+# 提交任務
 curl -X POST \
   "http://localhost:8787/api/sensemake?OPENROUTER_API_KEY=your_api_key&OPENROUTER_MODEL=openai/gpt-oss-20b:free&additionalContext=產品評論討論&output_lang=zh-TW" \
   -F "file=@comments.json"
+
+# 返回示例：
+# {
+#   "success": true,
+#   "taskId": "task-1234567890-abc123",
+#   "message": "Task queued successfully",
+#   "commentsCount": 50,
+#   "model": "openai/gpt-oss-20b:free",
+#   "status": "queued",
+#   "pollingUrl": "/api/sensemake/result/task-1234567890-abc123",
+#   "estimatedTime": "10~30 minutes"
+# }
+
+# 輪詢結果（需要等待 3-30 分鐘）
+curl http://localhost:8787/api/sensemake/result/task-1234567890-abc123
 ```
 
-#### 3. 測試頁面
-項目包含一個測試頁面 `test-api.html`，您可以在瀏覽器中打開它來測試 API 功能。
+#### 4. 測試端點
 
-#### 4. 示例數據
-項目包含示例數據文件：
-- `example-data.json` - JSON 格式的示例評論數據
-- `example-data.csv` - CSV 格式的示例評論數據（簡單投票格式）
-- `example-data-grouped.csv` - CSV 格式的示例評論數據（群組投票格式）
+**測試 LLM 連接：**
+```bash
+curl -X POST http://localhost:8787/api/test-llm
+```
 
-您可以使用這些文件來測試 API 功能。
+**測試 CSV 解析：**
+```bash
+curl -X POST \
+  -F "file=@comments.csv" \
+  http://localhost:8787/api/test-csv
+```
+
+**測試 JSON 解析：**
+```bash
+curl -X POST \
+  -F "file=@comments.json" \
+  http://localhost:8787/api/test-json
+```
+
+**測試 R2 存儲：**
+```bash
+curl -X POST http://localhost:8787/api/test-r2
+```
+
+#### 5. 刪除任務報告
+```bash
+curl -X DELETE http://localhost:8787/api/sensemake/delete/task-1234567890-abc123
+```
 
 ### 環境變數配置
 
@@ -228,17 +279,26 @@ Sensemaker Backend is a backend service built on Cloudflare Workers, integrating
 
 #### API Endpoints
 
-- **GET /** - Health check endpoint
-- **POST /api/sensemake** - Intelligent comment data analysis
+- **GET /** - Returns test page (index.html)
+- **GET /api/test** - Health check endpoint
+- **POST /api/sensemake** - Intelligent comment data analysis (using Queue for async processing)
   - Query parameters:
     - `OPENROUTER_API_KEY` (required): OpenRouter API key
     - `OPENROUTER_MODEL` (optional): Model name, defaults to `openai/gpt-oss-20b:free`
     - `additionalContext` or `a` (optional): Additional context description for the conversation
     - `output_lang` (optional): Output language, supports `en` and `zh-TW`, defaults to `en`
-  - Request body: FormData format with `file` field (JSON or CSV file)
+  - Request body: FormData format with `file` field (JSON, CSV, or TXT file)
   - Supported file formats:
     - JSON: Array of comments or object with comments field
     - CSV: Table with comment-id, comment_text and voting data columns
+    - TXT: Text file containing a single URL pointing to properly formatted JSON or CSV
+  - Returns: Task ID and polling URL, frontend needs to poll for results
+- **GET /api/sensemake/result/:taskId** - Get processing results
+- **DELETE /api/sensemake/delete/:taskId** - Delete task report
+- **POST /api/test-llm** - Test LLM connection and functionality
+- **POST /api/test-csv** - Test CSV file parsing
+- **POST /api/test-json** - Test JSON file parsing
+- **POST /api/test-r2** - Test R2 storage read/write functionality
 
 ### Technology Stack
 
@@ -247,6 +307,7 @@ Sensemaker Backend is a backend service built on Cloudflare Workers, integrating
 - **Build Tool**: Wrangler
 - **Testing Framework**: Vitest
 - **Dependencies**: sensemaking-tools
+- **Async Processing**: Cloudflare Queue
 
 ### System Requirements
 
@@ -337,29 +398,70 @@ Test files are located in the `test/` directory.
 
 ### Usage Examples
 
-#### 1. Health Check
+#### 1. Access Test Page
+```bash
+# Visit in browser
+https://sensemaker-backend.bestian123.workers.dev/
+```
+
+#### 2. Health Check
 ```bash
 curl http://localhost:8787/api/test
 ```
 
-#### 2. Analyze Comment Data
+#### 3. Analyze Comment Data (Async Processing)
 ```bash
-# Using curl to send request
+# Submit task
 curl -X POST \
   "http://localhost:8787/api/sensemake?OPENROUTER_API_KEY=your_api_key&OPENROUTER_MODEL=openai/gpt-oss-20b:free&additionalContext=Product review discussion&output_lang=en" \
   -F "file=@comments.json"
+
+# Response example:
+# {
+#   "success": true,
+#   "taskId": "task-1234567890-abc123",
+#   "message": "Task queued successfully",
+#   "commentsCount": 50,
+#   "model": "openai/gpt-oss-20b:free",
+#   "status": "queued",
+#   "pollingUrl": "/api/sensemake/result/task-1234567890-abc123",
+#   "estimatedTime": "10~30 minutes"
+# }
+
+# Poll for results (wait 3-30 minutes)
+curl http://localhost:8787/api/sensemake/result/task-1234567890-abc123
 ```
 
-#### 3. Test Page
-The project includes a test page `test-api.html` that you can open in your browser to test the API functionality.
+#### 4. Test Endpoints
 
-#### 4. Sample Data
-The project includes sample data files:
-- `example-data.json` - Sample comment data in JSON format
-- `example-data.csv` - Sample comment data in CSV format (simple voting format)
-- `example-data-grouped.csv` - Sample comment data in CSV format (grouped voting format)
+**Test LLM Connection:**
+```bash
+curl -X POST http://localhost:8787/api/test-llm
+```
 
-You can use these files to test the API functionality.
+**Test CSV Parsing:**
+```bash
+curl -X POST \
+  -F "file=@comments.csv" \
+  http://localhost:8787/api/test-csv
+```
+
+**Test JSON Parsing:**
+```bash
+curl -X POST \
+  -F "file=@comments.json" \
+  http://localhost:8787/api/test-json
+```
+
+**Test R2 Storage:**
+```bash
+curl -X POST http://localhost:8787/api/test-r2
+```
+
+#### 5. Delete Task Report
+```bash
+curl -X DELETE http://localhost:8787/api/sensemake/delete/task-1234567890-abc123
+```
 
 ### Environment Variables Configuration
 
