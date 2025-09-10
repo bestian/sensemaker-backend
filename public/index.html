@@ -338,6 +338,7 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
         <div class="test-buttons">
             <button onclick="testLLM()" class="test-btn">🧠 測試 LLM</button>
             <button onclick="testCSV()" class="test-btn">📊 測試 CSV</button>
+            <button onclick="testJSON()" class="test-btn">📄 測試 JSON</button>
             <button onclick="testR2()" class="test-btn">☁️ 測試 R2</button>
             <button id="downloadMarkdownBtn" onclick="downloadMarkdown()" class="test-btn" style="display: none;" disabled>⬇️ 下載 Markdown</button>
         </div>
@@ -655,6 +656,35 @@ comment-2,界面設計很美觀功能也很實用,12,1,0</pre>
                     showResult(`✅ CSV 解析成功！\n\n處理了 ${result.commentsCount} 條評論\n\n詳細結果:\n${JSON.stringify(result, null, 2)}`, 'success');
                 } else {
                     showResult(`❌ CSV 解析失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
+                }
+            } catch (error) {
+                showResult(`❌ 請求錯誤:\n${error.message}`, 'error');
+            }
+        }
+
+        async function testJSON() {
+            const fileInput = document.getElementById('file');
+            if (!fileInput.files[0]) {
+                showResult('❌ 請先選擇 JSON 文件', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            try {
+                showResult('🔄 正在測試 JSON 解析...', 'info');
+                
+                const response = await fetch('https://sensemaker-backend.bestian123.workers.dev/api/test-json', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    showResult(`✅ JSON 解析成功！\n\n處理了 ${result.commentsCount} 條評論\n\n詳細結果:\n${JSON.stringify(result, null, 2)}`, 'success');
+                } else {
+                    showResult(`❌ JSON 解析失敗:\n${JSON.stringify(result, null, 2)}`, 'error');
                 }
             } catch (error) {
                 showResult(`❌ 請求錯誤:\n${error.message}`, 'error');
