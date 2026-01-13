@@ -360,6 +360,34 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 		);
 	}
 
+	// 預檢 OpenRouter API Key，避免後續流程才發現認證錯誤
+	try {
+		const preflightModel = new (OpenRouterModel as any)(openRouterApiKey, openRouterModel, env.OPENROUTER_BASE_URL);
+		const preflightPrompt = 'Please reply with: Hello World';
+		const preflightResponse = await preflightModel.generateText(preflightPrompt, 'en');
+
+		const normalizedReply = (preflightResponse || '').toLowerCase();
+		if (!normalizedReply.includes('hello world')) {
+			throw new Error('Unexpected preflight reply');
+		}
+	} catch (error) {
+		console.error('OpenRouter API key preflight failed:', error);
+		return new Response(
+			JSON.stringify({ 
+				error: 'Invalid API Key', 
+				message: 'OpenRouter API key verification failed before queuing task',
+				details: error instanceof Error ? error.message : String(error)
+			}), 
+			{ 
+				status: 401, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+
 	try {
 		// 解析請求體
 		const formData = await request.formData();
