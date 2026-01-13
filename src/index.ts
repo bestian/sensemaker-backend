@@ -330,6 +330,52 @@ export default {
 };
 
 /**
+ * 驗證 OpenRouter API Key 是否有效
+ */
+async function validateOpenRouterApiKey(
+	apiKey: string,
+	model: string,
+	baseUrl: string
+): Promise<{ valid: boolean; error?: string }> {
+	try {
+		console.log('Validating OpenRouter API Key...');
+		
+		// 創建 OpenRouter 模型實例
+		const testModel = new (OpenRouterModel as any)(apiKey, model, baseUrl);
+		
+		// 發送簡單的測試 prompt
+		const testPrompt = 'Please reply with: Hello World';
+		const response = await testModel.generateText(testPrompt, 'en');
+		
+		// 檢查回應是否有效
+		if (response && typeof response === 'string' && response.trim().length > 0) {
+			console.log('API Key validation successful');
+			return { valid: true };
+		} else {
+			console.log('API Key validation failed: Invalid response');
+			return { valid: false, error: 'Invalid API Key: API returned empty or invalid response' };
+		}
+	} catch (error: any) {
+		console.error('API Key validation error:', error);
+		
+		// 檢查是否為認證錯誤
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		const errorString = errorMessage.toLowerCase();
+		
+		if (errorString.includes('401') || 
+		    errorString.includes('unauthorized') || 
+		    errorString.includes('invalid') ||
+		    errorString.includes('authentication') ||
+		    errorString.includes('api key')) {
+			return { valid: false, error: 'Invalid API Key: Authentication failed' };
+		}
+		
+		// 其他錯誤
+		return { valid: false, error: `Invalid API Key: ${errorMessage}` };
+	}
+}
+
+/**
  * 處理 sensemake API 請求（使用 Queue 異步處理）
  */
 async function handleSensemakeRequest(request: Request, url: URL, env: Env, corsHeaders: Record<string, string>): Promise<Response> {
@@ -359,6 +405,32 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 			}
 		);
 	}
+
+	// 驗證 API Key 是否有效
+	const validation = await validateOpenRouterApiKey(
+		openRouterApiKey,
+		openRouterModel,
+		env.OPENROUTER_BASE_URL
+	);
+
+	if (!validation.valid) {
+		return new Response(
+			JSON.stringify({ 
+				error: 'Invalid API Key', 
+				message: validation.error || 'API Key validation failed',
+				details: 'The provided OpenRouter API Key is invalid or cannot be authenticated. Please check your API key and try again.'
+			}), 
+			{ 
+				status: 401, 
+				headers: { 
+					'Content-Type': 'application/json',
+					...corsHeaders,
+				} 
+			}
+		);
+	}
+
+	console.log('API Key validation passed, proceeding with request processing');
 
 	try {
 		// 解析請求體
