@@ -690,8 +690,33 @@ async function processSensemakeTask(
 			);
 		} catch (storageError) {
 			console.error(`Task ${taskId}: Failed to store error to R2:`, storageError);
+	
+			// 確保前端可輪詢到失敗狀態的最小報告
+			const fallbackErrorData = {
+				taskId,
+				status: 'failed',
+				failedAt: errorData.failedAt,
+				error: 'Failed to persist error report to R2',
+				originalError: errorData.error,
+			};
+	
+			try {
+				await env.SENSEMAKER_RESULTS.put(
+					`${taskId}.json`,
+					JSON.stringify(fallbackErrorData, null, 2),
+					{
+						httpMetadata: { contentType: 'application/json' },
+						customMetadata: {
+							taskId,
+							status: 'failed',
+							failedAt: fallbackErrorData.failedAt,
+						},
+					}
+				);
+			} catch (fallbackError) {
+				console.error(`Task ${taskId}: Failed to store fallback error report:`, fallbackError);
+			}
 		}
-
 		throw error;
 	}
 }
