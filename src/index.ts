@@ -4,6 +4,7 @@ import { Sensemaker, OpenRouterModel, SummarizationType, VoteTally } from 'sense
 import type { Comment, Topic } from 'sensemaking-tools';
 import { parseCSVFile, parseTopicsString } from './utils/sensemake_openrouter_utils';
 import { parseJSONFile } from './utils/parseJSON';
+import { getFormDataString } from './utils/getFormDataString';
 
 /**
  * Sensemaker Backend API with Queue Support
@@ -384,10 +385,11 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 	console.log('OPENROUTER_MODEL', env.OPENROUTER_MODEL);
 	
 	// 解析查詢參數
-	const openRouterApiKey = url.searchParams.get('OPENROUTER_API_KEY') || env.OPENROUTER_API_KEY;
-	const openRouterModel = url.searchParams.get('OPENROUTER_API_KEY') ? (url.searchParams.get('OPENROUTER_MODEL') || env.OPENROUTER_MODEL) : env.OPENROUTER_MODEL;
-	const additionalContext = url.searchParams.get('additionalContext') || url.searchParams.get('a');
-	const outputLang = url.searchParams.get('output_lang') || 'en';
+	const formData = await request.formData();
+	const openRouterApiKey = getFormDataString(formData, 'openRouterApiKey') || url.searchParams.get('OPENROUTER_API_KEY') || env.OPENROUTER_API_KEY;
+	const openRouterModel = getFormDataString(formData, 'openRouterModel') || url.searchParams.get('OPENROUTER_MODEL') || env.OPENROUTER_MODEL;
+	const additionalContext = getFormDataString(formData, 'additionalContext') || url.searchParams.get('additionalContext');
+	const outputLang = getFormDataString(formData, 'outputLang') || url.searchParams.get('output_lang') || 'en';
 
 	// 檢查必需的 API 金鑰
 	if (!openRouterApiKey) {
@@ -433,8 +435,6 @@ async function handleSensemakeRequest(request: Request, url: URL, env: Env, cors
 	console.log('API Key validation passed, proceeding with request processing');
 
 	try {
-		// 解析請求體
-		const formData = await request.formData();
 		const file = formData.get('file') as File;
 
 		if (!file) {
