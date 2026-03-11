@@ -476,7 +476,7 @@ async function processSensemakeTask(
 		);
 
 		// 移除 TopicSummary 部分，只保留核心摘要內容
-		const filteredSummary = summary.withoutContents((sc) => sc.type === "TopicSummary");
+		const filteredSummary = summary.withoutContents((sc: any) => sc.type === "TopicSummary");
 
 		// 獲取 markdown 格式的摘要
 		const markdownContent = filteredSummary.getText("MARKDOWN");
@@ -915,7 +915,7 @@ async function handleTestJsonRequest(request: Request, env: Env, corsHeaders: Re
 					});
 				} else {
 					// 群組投票格式（對象有多個鍵，每個鍵都是投票資料）
-					Object.entries(comment.voteInfo).forEach(([key, voteData]) => {
+					Object.entries(comment.voteInfo as Record<string, any>).forEach(([key, voteData]) => {
 						console.log(`  群組 ${key}:`, {
 							agreeCount: (voteData as any).agreeCount,
 							disagreeCount: (voteData as any).disagreeCount,
@@ -1079,7 +1079,7 @@ async function handleTestCsvRequest(request: Request, env: Env, corsHeaders: Rec
 					});
 				} else {
 					// 群組投票格式
-					Object.entries(comment.voteInfo).forEach(([key, voteData]) => {
+					Object.entries(comment.voteInfo as Record<string, any>).forEach(([key, voteData]) => {
 						console.log(`  群組 ${key}:`, {
 							agreeCount: voteData.agreeCount,
 							disagreeCount: voteData.disagreeCount,
