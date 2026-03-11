@@ -15,7 +15,7 @@ describe('Sensemaker Backend API', () => {
 			
 			const responseData = JSON.parse(responseText);
 			expect(responseData.status).toBe('ok');
-			expect(responseData.message).toBe('Sensemaker Backend is running');
+			expect(responseData.message).toBe('Sensemaker Backend with Queue is running');
 			expect(responseData.environment).toBe('development');
 			expect(responseData.timestamp).toBeDefined();
 		});
@@ -29,7 +29,7 @@ describe('Sensemaker Backend API', () => {
 			
 			const responseData = JSON.parse(responseText);
 			expect(responseData.status).toBe('ok');
-			expect(responseData.message).toBe('Sensemaker Backend is running');
+			expect(responseData.message).toBe('Sensemaker Backend with Queue is running');
 			expect(responseData.environment).toBe('development');
 			expect(responseData.timestamp).toBeDefined();
 		});
@@ -56,7 +56,7 @@ describe('Sensemaker Backend API', () => {
 			});
 			const response = await SELF.fetch(request);
 			expect(response.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000');
-			expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, OPTIONS');
+			expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET, POST, DELETE, OPTIONS');
 		});
 	});
 
