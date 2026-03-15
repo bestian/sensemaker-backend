@@ -7,7 +7,8 @@ on:
         branches: [master]
 
 jobs:
-    build-and-test:
+    unit-and-typecheck:
+        name: Unit & Typecheck
         runs-on: ubuntu-latest
 
         steps:
@@ -26,6 +27,59 @@ jobs:
               run: npx tsc --noEmit
 
             - name: Run tests
-              run: npm test
+              run: npm test -- --run
               env:
                   OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'ci-placeholder' }}
+                  RUN_QUEUE_E2E: 'false'
+
+    queue-e2e-live:
+        name: Queue E2E (Live API)
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        env:
+            OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'ci-placeholder' }}
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Node.js
+              uses: actions/setup-node@v4
+              with:
+                  node-version: '20'
+                  cache: 'npm'
+
+            - name: Install dependencies
+              run: npm ci
+
+            - name: Start worker dev server
+              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
+              run: npm run dev > dev-server.log 2>&1 &
+
+            - name: Wait for API ready
+              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
+              run: |
+                  for i in {1..60}; do
+                    if curl -sSf http://127.0.0.1:8787/api/test >/dev/null; then
+                      echo "API is ready"
+                      exit 0
+                    fi
+                    sleep 2
+                  done
+                  echo "API did not become ready in time"
+                  exit 1
+
+            - name: Run queue e2e test
+              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
+              run: npm test -- --run -t "queue integration with CSV file"
+              env:
+                  OPENROUTER_API_KEY: ${{ env.OPENROUTER_API_KEY }}
+                  RUN_QUEUE_E2E: 'true'
+                  SENSEMAKER_TEST_BASE_URL: 'http://127.0.0.1:8787'
+
+            - name: Skip queue e2e (no API key)
+              if: ${{ env.OPENROUTER_API_KEY == 'ci-placeholder' }}
+              run: 'echo "Skipping queue e2e: OPENROUTER_API_KEY secret is not configured."'
+
+            - name: Show dev log on failure
+              if: failure()
+              run: cat dev-server.log
