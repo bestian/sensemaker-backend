@@ -76,7 +76,7 @@ jobs:
             - name: Run queue e2e test
               run: npm test -- --run -t "queue integration with CSV file"
               env:
-                  OPENROUTER_API_KEY: ${{ env.OPENROUTER_API_KEY }}
+                  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
                   RUN_QUEUE_E2E: 'true'
                   SENSEMAKER_TEST_BASE_URL: 'http://127.0.0.1:8787'
 
