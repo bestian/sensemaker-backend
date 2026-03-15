@@ -27,7 +27,7 @@ jobs:
               run: npx tsc --noEmit
 
             - name: Run tests
-              run: npm test -- --run
+              run: npm test -- --run -t "^(?!.*queue integration with CSV file).*$"
               env:
                   OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'ci-placeholder' }}
                   RUN_QUEUE_E2E: 'false'
@@ -37,7 +37,7 @@ jobs:
         runs-on: ubuntu-latest
         timeout-minutes: 20
         env:
-            OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY || 'ci-placeholder' }}
+            OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
         steps:
             - uses: actions/checkout@v4
@@ -51,12 +51,17 @@ jobs:
             - name: Install dependencies
               run: npm ci
 
+            - name: Validate OPENROUTER_API_KEY
+              run: |
+                  if [ -z "${OPENROUTER_API_KEY}" ]; then
+                    echo "OPENROUTER_API_KEY secret is required for queue polling test."
+                    exit 1
+                  fi
+
             - name: Start worker dev server
-              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
               run: npm run dev > dev-server.log 2>&1 &
 
             - name: Wait for API ready
-              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
               run: |
                   for i in {1..60}; do
                     if curl -sSf http://127.0.0.1:8787/api/test >/dev/null; then
@@ -69,16 +74,11 @@ jobs:
                   exit 1
 
             - name: Run queue e2e test
-              if: ${{ env.OPENROUTER_API_KEY != 'ci-placeholder' }}
               run: npm test -- --run -t "queue integration with CSV file"
               env:
                   OPENROUTER_API_KEY: ${{ env.OPENROUTER_API_KEY }}
                   RUN_QUEUE_E2E: 'true'
                   SENSEMAKER_TEST_BASE_URL: 'http://127.0.0.1:8787'
-
-            - name: Skip queue e2e (no API key)
-              if: ${{ env.OPENROUTER_API_KEY == 'ci-placeholder' }}
-              run: 'echo "Skipping queue e2e: OPENROUTER_API_KEY secret is not configured."'
 
             - name: Show dev log on failure
               if: failure()

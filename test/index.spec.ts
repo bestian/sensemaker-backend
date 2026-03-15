@@ -82,6 +82,12 @@ describe('Sensemaker Backend API', () => {
 		const hasUsableApiKey = !!openRouterApiKey && openRouterApiKey !== 'ci-placeholder';
 		const queueTest = shouldRunQueueE2E && hasUsableApiKey ? it : it.skip;
 
+		if (shouldRunQueueE2E && !hasUsableApiKey) {
+			it('requires OPENROUTER_API_KEY when RUN_QUEUE_E2E is enabled', () => {
+				throw new Error('RUN_QUEUE_E2E=true 但 OPENROUTER_API_KEY 未設定，無法執行 queue 輪詢測試。');
+			});
+		}
+
 		queueTest(
 			'uploads comments_test.csv, then polls result until markdown is produced',
 			async () => {
