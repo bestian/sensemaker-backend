@@ -4,6 +4,10 @@
 
 ---
 
+> **開發者注意**：在修改程式碼或送出 Pull Request 之前，請務必先在本機執行完整的 `npm run test` 並確認所有自動測試皆通過，再提交變更。
+>
+> **Developer Notice**: Before changing code or opening a Pull Request, always run the full `npm run test` locally and ensure all automated tests pass before submitting your changes.
+
 ## 中文
 
 ### 項目簡介
@@ -125,12 +129,14 @@ sensemaker-backend/
 
 ### 測試
 
-使用 Vitest 運行測試：
+使用 Vitest 運行測試，並用一筆測試資料實際跑Sensemaker的LLM：
 ```bash
 npm test
 ```
 
 測試文件位於 `test/` 目錄中。
+
+開發者在修改程式碼或送出 Pull Request 前，請先執行完整的 `npm run test` 並確認所有自動測試皆通過，再提交變更。
 
 ### 使用示例
 
@@ -396,6 +402,8 @@ npm test
 ```
 
 Test files are located in the `test/` directory.
+
+Before changing code or opening a pull request, always run the full `npm run test` locally and ensure all automated tests pass before submitting your changes.
 
 ### Usage Examples
 

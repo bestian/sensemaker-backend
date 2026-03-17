@@ -7,7 +7,6 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const INITIAL_WAIT_MS = 30_000;
 const POLL_INTERVAL_MS = 30_000;
 const MAX_POLL_ATTEMPTS = 20;
-const TEST_BASE_URL = process.env.SENSEMAKER_TEST_BASE_URL || 'http://localhost:8787';
 const TEST_MODEL = 'openai/gpt-oss-120b';
 
 describe('Sensemaker Backend API', () => {
@@ -96,14 +95,14 @@ describe('Sensemaker Backend API', () => {
 				const submitFormData = new FormData();
 				submitFormData.append('file', csvFile);
 
-				const submitUrl = new URL('/api/sensemake', TEST_BASE_URL);
+				const submitUrl = new URL('http://example.com/api/sensemake');
 				submitUrl.searchParams.set('OPENROUTER_API_KEY', openRouterApiKey as string);
 				submitUrl.searchParams.set('OPENROUTER_MODEL', TEST_MODEL);
 
-				const submitResponse = await fetch(submitUrl, {
+				const submitResponse = await SELF.fetch(new Request(submitUrl.toString(), {
 					method: 'POST',
 					body: submitFormData,
-				});
+				}));
 				const submitPayload = await submitResponse.json() as {
 					success?: boolean;
 					taskId?: string;
@@ -126,8 +125,8 @@ describe('Sensemaker Backend API', () => {
 				await sleep(INITIAL_WAIT_MS);
 
 				for (let attempt = 1; attempt <= MAX_POLL_ATTEMPTS; attempt += 1) {
-					const pollUrl = new URL(pollingPath, TEST_BASE_URL);
-					const pollResponse = await fetch(pollUrl);
+					const pollUrl = new URL(pollingPath, 'http://example.com');
+					const pollResponse = await SELF.fetch(new Request(pollUrl.toString()));
 					lastStatusCode = pollResponse.status;
 					lastPayload = await pollResponse.json();
 
